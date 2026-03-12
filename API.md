@@ -17,7 +17,8 @@ All examples assume `import "github.com/otfabric/modbus"`.
    - [Advanced register operations (FC20/21/23/24)](#26-advanced-register-operations-fc20212324)
    - [Device identification (FC43)](#27-device-identification-fc43)
    - [Modbus device detection](#28-modbus-device-detection)
-   - [Diagnostics and Report Server ID (FC08/0x11)](#29-diagnostics-and-report-server-id-fc080x11)
+   - [SunSpec discovery](#29-sunspec-discovery)
+   - [Diagnostics and Report Server ID (FC08/0x11)](#210-diagnostics-and-report-server-id-fc080x11)
 3. [Server](#3-server)
    - [Configuration](#31-serverconfiguration)
    - [Lifecycle](#32-lifecycle)
@@ -301,6 +302,37 @@ Example — device stores the serial number "SN1234" in 3 registers at address 0
 sn, err := client.ReadAscii(ctx, 1, 0x0100, 3, modbus.HoldingRegister)
 // sn == "SN1234"
 ```
+
+#### Convenience read helpers (FC03/FC04)
+
+These helpers are useful for fixed-size fields (e.g. SunSpec markers, addresses, fixed ASCII). They use the same request path as other client methods. The address and byte helpers use **raw wire order** and do not apply `SetEncoding` numeric interpretation.
+
+```go
+// Reads exactly 2 consecutive registers as [2]uint16. SetEncoding applies.
+func (mc *ModbusClient) ReadUint16Pair(ctx context.Context, unitId uint8, addr uint16, regType RegType) ([2]uint16, error)
+
+// Same byte layout as ReadAscii (high byte = first char, low byte = second) but trailing spaces are preserved.
+func (mc *ModbusClient) ReadAsciiFixed(ctx context.Context, unitId uint8, addr uint16, quantity uint16, regType RegType) (string, error)
+
+// Reads quantity bytes in raw wire order (no byte reordering). quantity must be > 0.
+func (mc *ModbusClient) ReadUint8s(ctx context.Context, unitId uint8, addr uint16, quantity uint16, regType RegType) ([]uint8, error)
+
+// Reads 4 bytes (2 registers) in raw wire order and returns as IPv4 net.IP.
+func (mc *ModbusClient) ReadIPAddr(ctx context.Context, unitId uint8, addr uint16, regType RegType) (net.IP, error)
+
+// Reads 16 bytes (8 registers) in raw wire order and returns as IPv6 net.IP.
+func (mc *ModbusClient) ReadIPv6Addr(ctx context.Context, unitId uint8, addr uint16, regType RegType) (net.IP, error)
+
+// Reads 6 bytes (3 registers) in raw wire order and returns as MAC/EUI-48 net.HardwareAddr.
+func (mc *ModbusClient) ReadEUI48(ctx context.Context, unitId uint8, addr uint16, regType RegType) (net.HardwareAddr, error)
+```
+
+- **ReadUint16Pair** — FC03/FC04; reads exactly 2 consecutive registers as `[2]uint16`.
+- **ReadAsciiFixed** — FC03/FC04; same as ReadAscii but trailing spaces are preserved.
+- **ReadUint8s** — FC03/FC04; reads bytes in wire order without byte reordering. `quantity == 0` returns `ErrUnexpectedParameters`.
+- **ReadIPAddr** — FC03/FC04; reads 4 bytes and returns `net.IP`. Short response returns `ErrProtocolError`.
+- **ReadIPv6Addr** — FC03/FC04; reads 16 bytes and returns `net.IP`. Short response returns `ErrProtocolError`.
+- **ReadEUI48** — FC03/FC04; reads 6 bytes and returns `net.HardwareAddr`. Short response returns `ErrProtocolError`.
 
 #### BCD and Packed BCD
 
@@ -653,7 +685,122 @@ func (mc *ModbusClient) HasUnitIdentifyFunction(ctx context.Context, unitId uint
 
 ---
 
-### 2.9 Diagnostics and Report Server ID (FC08/0x11)
+### 2.9 SunSpec discovery
+
+The library provides transport-level **read-only** SunSpec discovery helpers: detect the SunSpec "SunS" marker, probe candidate base addresses, and enumerate the model chain (model ID and length only). These APIs do not modify device state. They do **not** implement point decoding, scale factors, or schema-driven parsing; that belongs in a higher-level SunSpec library.
+
+**Defaults when `opts` is nil:** `RegType = HoldingRegister`, `BaseAddresses` = official candidates 0, 40000, 50000 plus adjacent offsets (1, 39999, 40001, 49999, 50001) for 0-based/1-based compatibility, `MaxModels = 256`. UnitID zero is treated as 1. "Not SunSpec" is **not** an error: detection returns `Detected: false` with `error == nil`. Reaching **MaxModels** stops enumeration and returns the models collected so far **without error** (normal truncation). Invalid options (UnitID outside 1–247, unsupported RegType, empty BaseAddresses) return `ErrUnexpectedParameters`.
+
+#### Types
+
+```go
+type SunSpecOptions struct {
+    UnitID         uint8    // Modbus slave/unit ID (1–247)
+    RegType        RegType  // default HoldingRegister
+    BaseAddresses  []uint16 // default: 0, 40000, 50000 + adjacent 1, 39999, 40001, 49999, 50001
+    MaxModels      int      // guard; 0 = 256
+    MaxAddressSpan uint16   // max (end − base) for model chain; 0 = no limit
+}
+
+type SunSpecProbeAttempt struct {
+    BaseAddress uint16
+    RegType     RegType
+    Registers   []uint16 // len 2 when read succeeded
+    Matched     bool
+    Error       error
+}
+
+type SunSpecDetectionResult struct {
+    Detected    bool
+    UnitID      uint8
+    RegType     RegType
+    BaseAddress uint16
+    Marker      [2]uint16
+    Attempts    []SunSpecProbeAttempt
+}
+
+type SunSpecModelHeader struct {
+    ID           uint16
+    Length       uint16   // payload length in registers (excl. 2-reg header)
+    StartAddress uint16
+    EndAddress   uint16
+    NextAddress  uint16
+    HeaderRaw    [2]uint16
+    IsEndModel   bool
+}
+
+type SunSpecDiscoveryResult struct {
+    Detection SunSpecDetectionResult
+    Models    []SunSpecModelHeader
+}
+```
+
+#### DetectSunSpec
+
+Probes each candidate base address: reads 2 registers and checks for the SunSpec marker (reg 0 = 0x5375, reg 1 = 0x6E53). Returns a structured result; only returns a non-nil error for invalid options, context cancellation, or inability to produce a result. Uses the same request path as other client methods (lock per read, retries, metrics).
+
+```go
+func (mc *ModbusClient) DetectSunSpec(ctx context.Context, opts *SunSpecOptions) (*SunSpecDetectionResult, error)
+```
+
+#### ReadSunSpecModelHeaders
+
+Walks the model chain starting at `baseAddress + 2`, reading 2 registers per model (ID, length). Stops at the end model (ID 0xFFFF, length 0) or when guards trigger. **Reaching MaxModels** stops enumeration and returns the models collected so far **without error**. Returns **partial model results** plus `ErrSunSpecModelChainInvalid` for malformed or non-progressing chains (e.g. length 0 with ID ≠ 0xFFFF, or `baseAddress+2` overflow), or `ErrSunSpecModelChainLimitExceeded` when the chain exceeds `MaxAddressSpan`. Uses **big-endian** for marker and headers; does not use SetEncoding. Uses the same request path as other client methods (lock per read, retries, metrics).
+
+```go
+func (mc *ModbusClient) ReadSunSpecModelHeaders(
+    ctx context.Context,
+    opts *SunSpecOptions,
+    baseAddress uint16,
+) ([]SunSpecModelHeader, error)
+```
+
+#### DiscoverSunSpec
+
+Convenience: runs DetectSunSpec and, if detected, ReadSunSpecModelHeaders. Single call for fingerprinting and inventory.
+
+```go
+func (mc *ModbusClient) DiscoverSunSpec(ctx context.Context, opts *SunSpecOptions) (*SunSpecDiscoveryResult, error)
+```
+
+**Example — detect only:**
+
+```go
+res, err := client.DetectSunSpec(ctx, &modbus.SunSpecOptions{UnitID: 1})
+if err != nil {
+    return err
+}
+if !res.Detected {
+    fmt.Println("not sunspec")
+    return nil
+}
+fmt.Printf("sunspec at base %d\n", res.BaseAddress)
+```
+
+**Example — detect and list models:**
+
+```go
+disc, err := client.DiscoverSunSpec(ctx, &modbus.SunSpecOptions{UnitID: 1})
+if err != nil {
+    return err
+}
+if !disc.Detection.Detected {
+    fmt.Println("not sunspec")
+    return nil
+}
+for _, m := range disc.Models {
+    if m.IsEndModel {
+        fmt.Printf("END at %d\n", m.StartAddress)
+        continue
+    }
+    fmt.Printf("model=%d start=%d end=%d len=%d\n",
+        m.ID, m.StartAddress, m.EndAddress, m.Length)
+}
+```
+
+---
+
+### 2.10 Diagnostics and Report Server ID (FC08/0x11)
 
 #### Diagnostics (FC 0x08)
 
@@ -956,7 +1103,9 @@ var (
     ErrBadUnitId               // response unit ID does not match request
     ErrBadTransactionId        // TCP transaction ID mismatch
     ErrUnknownProtocolId       // non-zero MBAP protocol identifier
-    ErrUnexpectedParameters    // invalid arguments passed to a client method
+    ErrUnexpectedParameters          // invalid arguments passed to a client method
+    ErrSunSpecModelChainInvalid      // malformed or non-progressing SunSpec model chain
+    ErrSunSpecModelChainLimitExceeded // SunSpec model chain exceeded MaxAddressSpan
 )
 ```
 

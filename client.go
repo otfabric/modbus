@@ -817,6 +817,88 @@ func (mc *ModbusClient) ReadUint16(ctx context.Context, unitId uint8, addr uint1
 	return mc.ReadRegister(ctx, unitId, addr, regType)
 }
 
+// ReadUint16Pair reads exactly two consecutive 16-bit registers (FC03/FC04) and returns them as [2]uint16.
+// Uses the same byte-order semantics as ReadRegisters (SetEncoding applies).
+func (mc *ModbusClient) ReadUint16Pair(ctx context.Context, unitId uint8, addr uint16, regType RegType) ([2]uint16, error) {
+	regs, err := mc.ReadUint16s(ctx, unitId, addr, 2, regType)
+	if err != nil {
+		return [2]uint16{}, err
+	}
+	if len(regs) != 2 {
+		return [2]uint16{}, ErrProtocolError
+	}
+	return [2]uint16{regs[0], regs[1]}, nil
+}
+
+// ReadAsciiFixed reads quantity registers (FC03/FC04) as ASCII with the same byte layout as ReadAscii
+// (high byte of each register = first character, low byte = second) but does not strip trailing spaces.
+// Returns the exact fixed-width string. quantity must be greater than zero.
+func (mc *ModbusClient) ReadAsciiFixed(ctx context.Context, unitId uint8, addr uint16, quantity uint16, regType RegType) (string, error) {
+	if quantity == 0 {
+		return "", ErrUnexpectedParameters
+	}
+	raw, err := mc.ReadRawBytes(ctx, unitId, addr, quantity*2, regType)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+// ReadUint8s reads quantity bytes from registers (FC03/FC04) in raw wire order without byte reordering.
+// Useful for fixed binary fields (e.g. IPv6, EUI-48, opaque buffers). quantity must be greater than zero.
+// Does not apply SetEncoding; bytes are returned exactly as on the wire.
+func (mc *ModbusClient) ReadUint8s(ctx context.Context, unitId uint8, addr uint16, quantity uint16, regType RegType) ([]uint8, error) {
+	if quantity == 0 {
+		return nil, ErrUnexpectedParameters
+	}
+	b, err := mc.ReadRawBytes(ctx, unitId, addr, quantity, regType)
+	if err != nil {
+		return nil, err
+	}
+	return []uint8(b), nil
+}
+
+// ReadIPAddr reads 4 bytes (2 registers) from the given address (FC03/FC04) in raw wire order
+// and returns them as an IPv4 net.IP. Does not apply SetEncoding.
+func (mc *ModbusClient) ReadIPAddr(ctx context.Context, unitId uint8, addr uint16, regType RegType) (net.IP, error) {
+	b, err := mc.ReadUint8s(ctx, unitId, addr, 4, regType)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != 4 {
+		return nil, ErrProtocolError
+	}
+	ip := make(net.IP, 4)
+	copy(ip, b)
+	return ip, nil
+}
+
+// ReadIPv6Addr reads 16 bytes (8 registers) from the given address (FC03/FC04) in raw wire order
+// and returns them as an IPv6 net.IP. Does not apply SetEncoding.
+func (mc *ModbusClient) ReadIPv6Addr(ctx context.Context, unitId uint8, addr uint16, regType RegType) (net.IP, error) {
+	b, err := mc.ReadUint8s(ctx, unitId, addr, 16, regType)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != 16 {
+		return nil, ErrProtocolError
+	}
+	return net.IP(b), nil
+}
+
+// ReadEUI48 reads 6 bytes (3 registers) from the given address (FC03/FC04) in raw wire order
+// and returns them as a MAC/EUI-48 net.HardwareAddr. Does not apply SetEncoding.
+func (mc *ModbusClient) ReadEUI48(ctx context.Context, unitId uint8, addr uint16, regType RegType) (net.HardwareAddr, error) {
+	b, err := mc.ReadUint8s(ctx, unitId, addr, 6, regType)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) != 6 {
+		return nil, ErrProtocolError
+	}
+	return net.HardwareAddr(b), nil
+}
+
 // Reads multiple 16-bit signed registers (function code 03 or 04).
 // The raw 16-bit value of each register is reinterpreted as int16.
 func (mc *ModbusClient) ReadInt16s(ctx context.Context, unitId uint8, addr uint16, quantity uint16, regType RegType) (values []int16, err error) {

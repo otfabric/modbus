@@ -3,3 +3,6 @@ bin/
 
 # Ignore VS Code settings
 .vscode/
+
+# Ignore coverage files
+cover.*

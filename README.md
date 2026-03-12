@@ -86,7 +86,7 @@ cancellation control independent of the connection lifecycle.
 |---|---|---|---|
 | 01 | 0x01 | Read Coils | `ReadCoil`, `ReadCoils` |
 | 02 | 0x02 | Read Discrete Inputs | `ReadDiscreteInput`, `ReadDiscreteInputs` |
-| 03 | 0x03 | Read Holding Registers | `ReadRegister`, `ReadRegisters`, `ReadUint16(s)`, `ReadInt16(s)`, `ReadUint32(s)`, `ReadInt32(s)`, `ReadUint48(s)`, `ReadInt48(s)`, `ReadUint64(s)`, `ReadInt64(s)`, `ReadFloat32(s)`, `ReadFloat64(s)`, `ReadAscii`, `ReadAsciiReverse`, `ReadBCD`, `ReadPackedBCD`, `ReadBytes`, `ReadRawBytes` |
+| 03 | 0x03 | Read Holding Registers | `ReadRegister`, `ReadRegisters`, `ReadUint16(s)`, `ReadUint16Pair`, `ReadInt16(s)`, `ReadUint32(s)`, `ReadInt32(s)`, `ReadUint48(s)`, `ReadInt48(s)`, `ReadUint64(s)`, `ReadInt64(s)`, `ReadFloat32(s)`, `ReadFloat64(s)`, `ReadAscii`, `ReadAsciiFixed`, `ReadAsciiReverse`, `ReadBCD`, `ReadPackedBCD`, `ReadBytes`, `ReadRawBytes`, `ReadUint8s`, `ReadIPAddr`, `ReadIPv6Addr`, `ReadEUI48` |
 | 04 | 0x04 | Read Input Registers | same methods as FC03, passing `InputRegister` |
 | 05 | 0x05 | Write Single Coil | `WriteCoil`, `WriteCoilValue` |
 | 06 | 0x06 | Write Single Register | `WriteRegister` |
@@ -100,7 +100,7 @@ cancellation control independent of the connection lifecycle.
 | 24 | 0x18 | Read FIFO Queue | `ReadFIFOQueue` |
 | 43/14 | 0x2B/0x0E | Read Device Identification | `ReadDeviceIdentification`, `ReadAllDeviceIdentification` |
 
-**Device detection:** `HasUnitReadFunction(ctx, unitId, fc)` checks a single read-style FC (FC08, FC43, FC03, FC04, FC01, FC02, FC11, FC18, FC20). `HasUnitIdentifyFunction(ctx, unitId)` checks FC43 (Read Device Identification). Callers decide which unit IDs and function codes to probe to avoid device timeouts from batch probing. See [API.md](API.md#28-modbus-device-detection).
+**Device detection:** `HasUnitReadFunction(ctx, unitId, fc)` checks a single read-style FC (FC08, FC43, FC03, FC04, FC01, FC02, FC11, FC18, FC20). `HasUnitIdentifyFunction(ctx, unitId)` checks FC43 (Read Device Identification). **SunSpec discovery:** `DetectSunSpec(ctx, opts)` probes candidate base addresses for the SunSpec "SunS" marker; `ReadSunSpecModelHeaders(ctx, opts, base)` enumerates the model chain (ID and length only); `DiscoverSunSpec(ctx, opts)` does both in one call for fingerprinting and inventory. The library does not decode SunSpec points or schemas — only transport-level detection and model headers. See [API.md § 2.8](API.md#28-modbus-device-detection) and [API.md § 2.9](API.md#29-sunspec-discovery).
 
 ### Supported Go types
 
@@ -195,6 +195,8 @@ be tested with `errors.Is`:
 | `ErrBadTransactionId` | TCP transaction ID mismatch (MBAP) |
 | `ErrUnknownProtocolId` | Non-zero MBAP protocol identifier |
 | `ErrUnexpectedParameters` | Invalid arguments passed to a client method |
+| `ErrSunSpecModelChainInvalid` | Malformed or non-progressing SunSpec model chain |
+| `ErrSunSpecModelChainLimitExceeded` | SunSpec model chain exceeded `MaxAddressSpan` |
 
 When the remote device sends a Modbus exception response, the error is additionally
 wrapped in `*ExceptionError`, which carries the raw `FunctionCode` and `ExceptionCode`
