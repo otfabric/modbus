@@ -689,13 +689,13 @@ func (mc *ModbusClient) HasUnitIdentifyFunction(ctx context.Context, unitId uint
 
 The library provides transport-level **read-only** SunSpec discovery helpers: detect the SunSpec "SunS" marker, probe candidate base addresses, and enumerate the model chain (model ID and length only). These APIs do not modify device state. They do **not** implement point decoding, scale factors, or schema-driven parsing; that belongs in a higher-level SunSpec library.
 
-**Defaults when `opts` is nil:** `RegType = HoldingRegister`, `BaseAddresses` = official candidates 0, 40000, 50000 plus adjacent offsets (1, 39999, 40001, 49999, 50001) for 0-based/1-based compatibility, `MaxModels = 256`. UnitID zero is treated as 1. "Not SunSpec" is **not** an error: detection returns `Detected: false` with `error == nil`. Reaching **MaxModels** stops enumeration and returns the models collected so far **without error** (normal truncation). Invalid options (UnitID outside 1–247, unsupported RegType, empty BaseAddresses) return `ErrUnexpectedParameters`.
+**Defaults when `opts` is nil:** `RegType = HoldingRegister`, `BaseAddresses` = official candidates 0, 40000, 50000 plus adjacent offsets (1, 39999, 40001, 49999, 50001) for 0-based/1-based compatibility, `MaxModels = 256`. UnitID zero is treated as 1. "Not SunSpec" is **not** an error: detection returns `Detected: false` with `error == nil`. Reaching **MaxModels** stops enumeration and returns the models collected so far **without error** (normal truncation). Invalid options (unsupported RegType, empty BaseAddresses) return `ErrUnexpectedParameters`. UnitID may be 0–255 (e.g. when the device is behind a Modbus gateway).
 
 #### Types
 
 ```go
 type SunSpecOptions struct {
-    UnitID         uint8    // Modbus slave/unit ID (1–247)
+    UnitID         uint8    // Modbus slave/unit ID (0–255); gateway use supported
     RegType        RegType  // default HoldingRegister
     BaseAddresses  []uint16 // default: 0, 40000, 50000 + adjacent 1, 39999, 40001, 49999, 50001
     MaxModels      int      // guard; 0 = 256

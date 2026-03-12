@@ -919,16 +919,6 @@ func TestDetectSunSpec_InvalidOptions(t *testing.T) {
 			t.Errorf("expected ErrUnexpectedParameters, got %v", err)
 		}
 	})
-	t.Run("InvalidUnitID", func(t *testing.T) {
-		// UnitID 248 is outside valid range 1–247
-		_, err := client.DetectSunSpec(context.Background(), &SunSpecOptions{UnitID: 248, BaseAddresses: []uint16{0}})
-		if err == nil {
-			t.Fatal("expected error for UnitID 248")
-		}
-		if !errors.Is(err, ErrUnexpectedParameters) {
-			t.Errorf("expected ErrUnexpectedParameters, got %v", err)
-		}
-	})
 }
 
 // TestReadSunSpecModelHeaders_InvalidOptions verifies ErrUnexpectedParameters for invalid options.

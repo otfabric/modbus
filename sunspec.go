@@ -20,7 +20,8 @@ var defaultSunSpecBaseAddresses = []uint16{0, 40000, 50000, 1, 39999, 40001, 499
 // RegType = HoldingRegister, BaseAddresses = defaultSunSpecBaseAddresses, MaxModels = 256.
 // UnitID zero is treated as 1 for scanner ergonomics (documented tradeoff: callers must set UnitID explicitly to avoid accidental probe of unit 1).
 type SunSpecOptions struct {
-	// UnitID is the Modbus slave/unit ID (1–247). Zero defaults to 1 for scanner ergonomics.
+	// UnitID is the Modbus slave/unit ID (0–255). Zero defaults to 1 for scanner ergonomics.
+	// Full range is allowed because SunSpec devices may sit behind a Modbus gateway.
 	UnitID uint8
 	// RegType is the register type to use. Zero value means HoldingRegister; set InputRegister to use FC04.
 	RegType RegType
@@ -109,9 +110,6 @@ func (mc *ModbusClient) sunSpecOptions(opts *SunSpecOptions) SunSpecOptions {
 
 // validateSunSpecOptions returns ErrUnexpectedParameters if options are invalid after applying defaults.
 func validateSunSpecOptions(o *SunSpecOptions) error {
-	if o.UnitID < 1 || o.UnitID > 247 {
-		return ErrUnexpectedParameters
-	}
 	if o.RegType != HoldingRegister && o.RegType != InputRegister {
 		return ErrUnexpectedParameters
 	}
@@ -126,7 +124,7 @@ func validateSunSpecOptions(o *SunSpecOptions) error {
 // They use the same request path as other client methods (lock per read, retries, metrics).
 // It does not treat "device is not SunSpec" as an error: when no candidate matches,
 // it returns a result with Detected false and error nil. A non-nil error is returned
-// for invalid options (UnitID outside 1–247, unsupported RegType, empty BaseAddresses), context cancellation, or inability to produce a result.
+// for invalid options (unsupported RegType, empty BaseAddresses), context cancellation, or inability to produce a result.
 func (mc *ModbusClient) DetectSunSpec(ctx context.Context, opts *SunSpecOptions) (*SunSpecDetectionResult, error) {
 	o := mc.sunSpecOptions(opts)
 	if err := validateSunSpecOptions(&o); err != nil {

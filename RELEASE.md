@@ -1,3 +1,24 @@
+# Release v0.2.1
+
+**Date:** 2026-03-12
+**Previous release:** v0.2.0
+
+## Summary
+
+Relax SunSpec discovery **UnitID** handling so the full range **0–255** is accepted. SunSpec-enabled devices behind a Modbus gateway may use unit IDs outside the classic 1–247 range; validation no longer rejects them.
+
+## Changes
+
+### Changed
+
+- **SunSpec options** — Removed UnitID range check (was 1–247). `SunSpecOptions.UnitID` now accepts 0–255. Zero still defaults to 1 for scanner ergonomics. Docs and API comments updated; invalid-options text no longer mentions UnitID.
+
+### Unchanged
+
+- All other SunSpec and FC03/FC04 helper behaviour unchanged.
+
+---
+
 # Release v0.2.0
 
 **Date:** 2026-03-12
@@ -15,7 +36,7 @@ Default probe addresses are the official protocol candidates **0, 40000, 50000**
 
 - **SunSpec discovery (client)**  
   - `DetectSunSpec(ctx, opts)` — Probes candidate base addresses for the "SunS" marker; returns a structured result. "Not SunSpec" is not an error (`Detected: false`, `error == nil`). Uses the same request path as other client methods (lock per read, retries, metrics).
-  - `ReadSunSpecModelHeaders(ctx, opts, baseAddress)` — Walks the model chain from `baseAddress+2`, returning model ID, length, and address ranges. Stops at end model (0xFFFF/0) or when guards trigger. Reaching MaxModels returns collected models without error. Malformed or non-progressing chains return partial results plus `ErrSunSpecModelChainInvalid`; exceeding `MaxAddressSpan` returns `ErrSunSpecModelChainLimitExceeded`. Invalid options (UnitID, RegType, empty BaseAddresses) return `ErrUnexpectedParameters`.
+  - `ReadSunSpecModelHeaders(ctx, opts, baseAddress)` — Walks the model chain from `baseAddress+2`, returning model ID, length, and address ranges. Stops at end model (0xFFFF/0) or when guards trigger. Reaching MaxModels returns collected models without error. Malformed or non-progressing chains return partial results plus `ErrSunSpecModelChainInvalid`; exceeding `MaxAddressSpan` returns `ErrSunSpecModelChainLimitExceeded`. Invalid options (unsupported RegType, empty BaseAddresses) return `ErrUnexpectedParameters`.
   - `DiscoverSunSpec(ctx, opts)` — Convenience: runs detection then model-header enumeration; returns combined result. Includes partial model results when the chain read fails partway.
 - **Types:** `SunSpecOptions`, `SunSpecProbeAttempt`, `SunSpecDetectionResult`, `SunSpecModelHeader`, `SunSpecDiscoveryResult`.
 - **Sentinels:** `ErrSunSpecModelChainInvalid`, `ErrSunSpecModelChainLimitExceeded`.
