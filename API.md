@@ -689,7 +689,7 @@ func (mc *ModbusClient) HasUnitIdentifyFunction(ctx context.Context, unitId uint
 
 The library provides transport-level **read-only** SunSpec discovery helpers: detect the SunSpec "SunS" marker, probe candidate base addresses, and enumerate the model chain (model ID and length only). These APIs do not modify device state. They do **not** implement point decoding, scale factors, or schema-driven parsing; that belongs in a higher-level SunSpec library.
 
-**Defaults when `opts` is nil:** `RegType = HoldingRegister`, `BaseAddresses` = official candidates 0, 40000, 50000 plus adjacent offsets (1, 39999, 40001, 49999, 50001) for 0-based/1-based compatibility, `MaxModels = 256`. UnitID zero is treated as 1. "Not SunSpec" is **not** an error: detection returns `Detected: false` with `error == nil`. Reaching **MaxModels** stops enumeration and returns the models collected so far **without error** (normal truncation). Invalid options (unsupported RegType, empty BaseAddresses) return `ErrUnexpectedParameters`. UnitID may be 0–255 (e.g. when the device is behind a Modbus gateway).
+**Defaults when `opts` is nil:** `RegType = HoldingRegister`, `BaseAddresses` = `SunSpecDefaultBaseAddresses` (official candidates 0, 40000, 50000 plus adjacent offsets 1, 39999, 40001, 49999, 50001 for 0-based/1-based compatibility), `MaxModels = 256`. UnitID zero is treated as 1. "Not SunSpec" is **not** an error: detection returns `Detected: false` with `error == nil`. Reaching **MaxModels** stops enumeration and returns the models collected so far **without error** (normal truncation). Invalid options (unsupported RegType, empty BaseAddresses) return `ErrUnexpectedParameters`. UnitID may be 0–255 (e.g. when the device is behind a Modbus gateway).
 
 #### Types
 
@@ -1417,3 +1417,18 @@ inspecting `ExceptionError` or implementing metrics.
 **ExceptionCode helpers:** `String()` (e.g. `"Illegal Data Address (0x02)"`), `ToError()` (sentinel or `fmt.Errorf` for unknown).
 
 **ExceptionError:** `Error()` returns a readable message like `"Read Holding Registers (0x03): Illegal Data Address (0x02)"` using the above `String()` methods.
+
+### SunSpec constants
+
+Exported constants for SunSpec marker detection, end-of-chain detection, and default probe addresses. These allow callers that process raw register data (e.g. strategies parsing `ScanResult.Data`) to use the canonical values without duplication.
+
+| Constant | Type | Value | Description |
+|---|---|---|---|
+| `SunSpecMarkerReg0` | `uint16` | `0x5375` | First register of "SunS" marker (`'S'<<8 \| 'u'`) |
+| `SunSpecMarkerReg1` | `uint16` | `0x6E53` | Second register of "SunS" marker (`'n'<<8 \| 'S'`) |
+| `SunSpecEndModelID` | `uint16` | `0xFFFF` | Model ID indicating end of SunSpec model chain |
+| `SunSpecEndModelLength` | `uint16` | `0` | Model length for end-of-chain sentinel |
+
+| Variable | Type | Value | Description |
+|---|---|---|---|
+| `SunSpecDefaultBaseAddresses` | `[]uint16` | `{0, 40000, 50000, 1, 39999, 40001, 49999, 50001}` | Default candidate base addresses for SunSpec probe |

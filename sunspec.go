@@ -6,18 +6,19 @@ import (
 
 // SunSpec marker is the 4-byte ASCII "SunS" in two big-endian 16-bit registers.
 const (
-	sunSpecMarkerReg0 = 0x5375 // 'S'<<8 | 'u'
-	sunSpecMarkerReg1 = 0x6E53 // 'n'<<8 | 'S'
+	SunSpecMarkerReg0 uint16 = 0x5375 // 'S'<<8 | 'u'
+	SunSpecMarkerReg1 uint16 = 0x6E53 // 'n'<<8 | 'S'
 )
 
-// Default SunSpec base addresses to probe. Official protocol candidates (0, 40000, 50000)
-// are probed first, then adjacent offsets (1, 39999, 40001, 49999, 50001) to tolerate
-// 0-based vs 1-based addressing confusion common in vendor documentation and tooling.
-var defaultSunSpecBaseAddresses = []uint16{0, 40000, 50000, 1, 39999, 40001, 49999, 50001}
+// SunSpecDefaultBaseAddresses are the default SunSpec base addresses to probe.
+// Official protocol candidates (0, 40000, 50000) are probed first, then adjacent
+// offsets (1, 39999, 40001, 49999, 50001) to tolerate 0-based vs 1-based addressing
+// confusion common in vendor documentation and tooling.
+var SunSpecDefaultBaseAddresses = []uint16{0, 40000, 50000, 1, 39999, 40001, 49999, 50001}
 
 // SunSpecOptions configures SunSpec detection and model chain discovery.
 // If opts is nil, DetectSunSpec and DiscoverSunSpec use defaults:
-// RegType = HoldingRegister, BaseAddresses = defaultSunSpecBaseAddresses, MaxModels = 256.
+// RegType = HoldingRegister, BaseAddresses = SunSpecDefaultBaseAddresses, MaxModels = 256.
 // UnitID zero is treated as 1 for scanner ergonomics (documented tradeoff: callers must set UnitID explicitly to avoid accidental probe of unit 1).
 type SunSpecOptions struct {
 	// UnitID is the Modbus slave/unit ID (0–255). Zero defaults to 1 for scanner ergonomics.
@@ -77,17 +78,18 @@ type SunSpecDiscoveryResult struct {
 	Models    []SunSpecModelHeader
 }
 
-// sunSpecEndModelID and sunSpecEndModelLength denote the end-of-map sentinel.
+// SunSpecEndModelID and SunSpecEndModelLength denote the end-of-map sentinel
+// (model ID 0xFFFF with length 0) that marks the end of the SunSpec model chain.
 const (
-	sunSpecEndModelID     = 0xFFFF
-	sunSpecEndModelLength = 0
+	SunSpecEndModelID     uint16 = 0xFFFF
+	SunSpecEndModelLength uint16 = 0
 )
 
 func (mc *ModbusClient) sunSpecOptions(opts *SunSpecOptions) SunSpecOptions {
 	o := SunSpecOptions{
 		UnitID:        1,
 		RegType:       HoldingRegister,
-		BaseAddresses: defaultSunSpecBaseAddresses,
+		BaseAddresses: SunSpecDefaultBaseAddresses,
 		MaxModels:     256,
 	}
 	if opts != nil {
@@ -158,7 +160,7 @@ func (mc *ModbusClient) DetectSunSpec(ctx context.Context, opts *SunSpecOptions)
 		}
 		regs := bytesToUint16s(BigEndian, raw)
 		attempt.Registers = regs
-		matched := len(regs) >= 2 && regs[0] == sunSpecMarkerReg0 && regs[1] == sunSpecMarkerReg1
+		matched := len(regs) >= 2 && regs[0] == SunSpecMarkerReg0 && regs[1] == SunSpecMarkerReg1
 		attempt.Matched = matched
 		res.Attempts = append(res.Attempts, attempt)
 
@@ -216,7 +218,7 @@ func (mc *ModbusClient) ReadSunSpecModelHeaders(ctx context.Context, opts *SunSp
 		id, length := regs[0], regs[1]
 
 		// End model: ID 0xFFFF, Length 0
-		isEnd := (id == sunSpecEndModelID && length == sunSpecEndModelLength)
+		isEnd := (id == SunSpecEndModelID && length == SunSpecEndModelLength)
 
 		// Address overflow: compute in uint32 to avoid wrap before guard
 		endExclusive := uint32(addr) + 2 + uint32(length)
@@ -242,7 +244,7 @@ func (mc *ModbusClient) ReadSunSpecModelHeaders(ctx context.Context, opts *SunSp
 		}
 
 		// Malformed: length 0 but not end model
-		if length == 0 && id != sunSpecEndModelID {
+		if length == 0 && id != SunSpecEndModelID {
 			return models, ErrSunSpecModelChainInvalid
 		}
 		if nextAddr <= addr {

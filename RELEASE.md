@@ -1,3 +1,27 @@
+# Release v0.2.2
+
+**Date:** 2026-03-12
+**Previous release:** v0.2.1
+
+## Summary
+
+Export SunSpec protocol constants so downstream consumers (e.g. strategies parsing raw `ScanResult.Data`) can reference the canonical marker, end-model sentinel, and default base address values directly instead of maintaining mirrored copies.
+
+## Changes
+
+### Changed
+
+- **SunSpec constants** — The following previously-unexported values are now exported:
+  - `SunSpecMarkerReg0` (`0x5375`) / `SunSpecMarkerReg1` (`0x6E53`) — "SunS" marker registers.
+  - `SunSpecEndModelID` (`0xFFFF`) / `SunSpecEndModelLength` (`0`) — end-of-chain sentinel.
+  - `SunSpecDefaultBaseAddresses` (`[]uint16{0, 40000, 50000, 1, 39999, 40001, 49999, 50001}`) — default probe addresses.
+
+### Unchanged
+
+- All SunSpec discovery methods, types, and behaviour unchanged. This is a purely additive API change.
+
+---
+
 # Release v0.2.1
 
 **Date:** 2026-03-12
