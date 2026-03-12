@@ -3,9 +3,10 @@
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 [![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/modbus)](https://goreportcard.com/report/github.com/otfabric/modbus)
+[![CI](https://github.com/otfabric/modbus/actions/workflows/ci.yml/badge.svg)](https://github.com/otfabric/modbus/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/badge/release-v0.1.0-blue.svg)](https://github.com/otfabric/modbus/releases)
 
-A production-ready Go implementation of the Modbus application protocol — **v0.1.0**.
+A production-ready Go implementation of the Modbus application protocol, providing both **client** and **server** capabilities. No C dependencies, no CGo — just Go.
 
 The library exposes a high-level, idiomatic Go API for both client and server roles,
 working with native Go types across all supported transports. Every request carries a
