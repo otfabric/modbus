@@ -1,0 +1,180 @@
+package modbus
+
+import (
+	"context"
+	"errors"
+	"sync"
+)
+
+// connPool manages a bounded pool of Modbus transport connections for TCP-based
+// transports (modbusTCP, modbusRTUOverTCP, modbusRTUOverUDP, modbusTCPOverUDP).
+//
+// Callers acquire a transport from the pool before executing a request and
+// return it afterwards. If a transport errors, it is discarded and a fresh
+// one is created on the next acquisition provided the pool is below maxConns.
+//
+// The pool is enabled when ClientConfiguration.MaxConns > 1.
+// Pre-warmed connections are created during Open() up to MinConns.
+type connPool struct {
+	mu       sync.Mutex
+	idle     chan transport            // buffered channel — ready connections
+	total    int                       // connections in flight + idle
+	maxConns int                       // hard upper limit on total connections
+	dial     func() (transport, error) // factory for new connections
+	logger   *logger
+}
+
+// newConnPool creates a pool and pre-warms minConns connections.
+// maxConns must be ≥ 1. minConns is clamped to [0, maxConns].
+func newConnPool(minConns, maxConns int, dial func() (transport, error), l *logger) (*connPool, error) {
+	if maxConns <= 0 {
+		maxConns = 1
+	}
+	if minConns < 0 {
+		minConns = 0
+	}
+	if minConns > maxConns {
+		minConns = maxConns
+	}
+
+	p := &connPool{
+		idle:     make(chan transport, maxConns),
+		maxConns: maxConns,
+		dial:     dial,
+		logger:   l,
+	}
+
+	// pre-warm MinConns connections
+	var created []transport
+	for i := 0; i < minConns; i++ {
+		t, err := dial()
+		if err != nil {
+			// close what we already opened and propagate the error
+			for _, c := range created {
+				_ = c.Close()
+			}
+			return nil, err
+		}
+		created = append(created, t)
+		p.total++
+	}
+
+	// place pre-warmed connections into the idle channel
+	for _, t := range created {
+		p.idle <- t
+	}
+
+	return p, nil
+}
+
+// acquire obtains a transport from the pool.
+// If an idle connection is available it is returned immediately.
+// If the pool is below maxConns a new connection is dialled.
+// Otherwise the call blocks until one is returned or ctx is cancelled.
+func (p *connPool) acquire(ctx context.Context) (transport, error) {
+	// fast path — take an idle connection without touching the mutex
+	select {
+	case t := <-p.idle:
+		return t, nil
+	default:
+	}
+
+	// check whether we can dial a fresh connection
+	p.mu.Lock()
+	if p.total < p.maxConns {
+		p.total++
+		p.mu.Unlock()
+
+		t, err := p.dial()
+		if err != nil {
+			p.mu.Lock()
+			p.total--
+			p.mu.Unlock()
+
+			return nil, err
+		}
+
+		return t, nil
+	}
+	p.mu.Unlock()
+
+	// pool is at capacity — wait for an idle connection or ctx cancellation
+	select {
+	case t := <-p.idle:
+		return t, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// release returns a healthy transport to the idle pool.
+func (p *connPool) release(t transport) {
+	// non-blocking send: if the channel is somehow full (shouldn't happen),
+	// close the connection to avoid a goroutine leak.
+	select {
+	case p.idle <- t:
+	default:
+		_ = t.Close()
+		p.mu.Lock()
+		p.total--
+		p.mu.Unlock()
+	}
+}
+
+// discard closes an unhealthy transport and decrements the total count so a
+// replacement can be dialled on the next acquire call.
+func (p *connPool) discard(t transport) {
+	_ = t.Close()
+
+	p.mu.Lock()
+	if p.total > 0 {
+		p.total--
+	}
+	p.mu.Unlock()
+}
+
+// execute acquires a transport, runs the request, and releases or discards it.
+func (p *connPool) execute(ctx context.Context, req *pdu) (*pdu, error) {
+	t, err := p.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := t.ExecuteRequest(ctx, req)
+	if err != nil {
+		p.discard(t)
+		return nil, err
+	}
+
+	p.release(t)
+
+	return res, nil
+}
+
+// closeAll closes every idle connection and resets the pool counters.
+// In-flight connections are not affected; they will be discarded when returned.
+func (p *connPool) closeAll() error {
+	// drain the idle channel
+	var idle []transport
+	for {
+		select {
+		case t := <-p.idle:
+			idle = append(idle, t)
+		default:
+			goto done
+		}
+	}
+done:
+	p.mu.Lock()
+	p.total -= len(idle)
+	p.mu.Unlock()
+
+	var errs []error
+	for _, t := range idle {
+		if err := t.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
+}

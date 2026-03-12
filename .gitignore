@@ -1,0 +1,5 @@
+# Ignore the bin directory
+bin/
+
+# Ignore VS Code settings
+.vscode/

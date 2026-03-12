@@ -1,0 +1,33 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck       # unchecked errors
+    - govet          # go vet checks (shadow, printf, etc.)
+    - ineffassign    # assigned but never used
+    - staticcheck    # comprehensive static analysis (includes gosimple + unused)
+    - misspell       # common spelling mistakes
+    - godot          # comment punctuation
+    - nilerr         # return nil instead of err
+    - exhaustive     # exhaustive switch on enums
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true  # a default: case satisfies exhaustiveness
+
+formatters:
+  enable:
+    - gofmt          # formatting
+    - goimports      # import grouping / formatting
+
+  exclusions:
+    paths:
+      - examples
+
+issues:
+  # Bump the default per-linter issue limit (default is 50)
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m
