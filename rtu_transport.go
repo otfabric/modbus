@@ -291,11 +291,16 @@ func (rt *rtuTransport) assembleRTUFrame(p *pdu) (adu []byte) {
 	return
 }
 
-// Computes the expected length of a modbus RTU response.
+// Computes the expected length of a Modbus RTU response.
 // For normal responses, the returned int is the number of payload bytes still to read
 // after the first 3 bytes (unitId, functionCode, first payload byte).
 // Return -1 for variable-length responses (FC08 Diagnostics); the caller must use
 // readVariableLengthDiagnostics.
+//
+// PDU length rules (aligned with Modbus application protocol / dissector heuristics):
+// - FC03/04 response: byte_count(1) + 2*quantity; byte_count = 2*quantity.
+// - FC01/02 response: byte_count(1) + ceil(quantity/8); FC05/06/0F/10/16: 5 bytes (echo).
+// - Exception response: 1 byte (exception code). FC08: variable (no byte_count field).
 func expectedResponseLenth(responseCode FunctionCode, responseLength uint8) (int, error) {
 	switch responseCode {
 	case FCReadHoldingRegisters,
@@ -315,6 +320,9 @@ func expectedResponseLenth(responseCode FunctionCode, responseLength uint8) (int
 		return -1, nil
 	case FCReportServerID:
 		return int(responseLength), nil
+	case FCReadExceptionStatus:
+		// Response: unit_id + fc + 1 byte (exception status). First payload byte is the status.
+		return 0, nil
 	case FunctionCode(0x80 | uint8(FCReadHoldingRegisters)),
 		FunctionCode(0x80 | uint8(FCReadInputRegisters)),
 		FunctionCode(0x80 | uint8(FCReadCoils)),
@@ -325,7 +333,8 @@ func expectedResponseLenth(responseCode FunctionCode, responseLength uint8) (int
 		FunctionCode(0x80 | uint8(FCWriteMultipleCoils)),
 		FunctionCode(0x80 | uint8(FCMaskWriteRegister)),
 		FunctionCode(0x80 | uint8(FCDiagnostics)),
-		FunctionCode(0x80 | uint8(FCReportServerID)):
+		FunctionCode(0x80 | uint8(FCReportServerID)),
+		FunctionCode(0x80 | uint8(FCReadExceptionStatus)):
 		return 0, nil
 	default:
 		return 0, ErrProtocolError
