@@ -1,3 +1,33 @@
+# Release v0.2.3
+
+**Date:** 2026-03-12
+**Previous release:** v0.2.2
+
+## Summary
+
+Align the library with common Modbus/TCP and Wireshark dissector behaviour: spec-compliant MBAP length validation, standard port constants, additional function-code coverage, optional transaction-ID diagnostics, and clearer protocol error reporting.
+
+## Changes
+
+### Added
+
+- **Standard port constants** — `PortModbusTCP` (502) and `PortModbusTLS` (802) for use in URLs or documentation. Modbus RTU over TCP has no standard port.
+- **MBAP length validation** — TCP transport rejects MBAP length &lt; 2 or &gt; 254 and returns an error wrapping `ErrInvalidMBAPLength` (received length included in the message). Validation applied on both receive and send.
+- **Function codes** — `FCReadExceptionStatus` (0x07), `FCGetCommEventCounters` (0x0B), `FCGetCommEventLog` (0x0C) added to known FCs and `KnownFunctionCodes()`. FC07 supported in RTU response length handling.
+- **LastTransactionID()** — Client method returns the MBAP transaction ID of the last successful TCP response (0 for RTU/non-TCP). Useful for diagnostics and correlating with packet captures.
+- **RTU PDU length rules** — Comment block in `expectedResponseLenth` documents response length rules per FC for spec/dissector alignment.
+
+### Changed
+
+- **TCP receive** — Frames with invalid MBAP length now return `ErrInvalidMBAPLength` (with value) instead of generic `ErrProtocolError`; log message includes expected range 2–254.
+- **TCP send** — Requests that would produce MBAP length &gt; 254 are rejected before send with `ErrInvalidMBAPLength`.
+
+### Unchanged
+
+- All existing client/server behaviour and API contracts unchanged. New constants and `LastTransactionID()` are additive.
+
+---
+
 # Release v0.2.2
 
 **Date:** 2026-03-12

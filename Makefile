@@ -15,6 +15,7 @@ all: build ## Default target: build cmd + examples apps
 build: build-cmd build-examples ## Build all app entrypoints
 
 build-cmd: ## Build binaries from cmd/*.go
+	@echo "Building command line interface"
 	@mkdir -p $(BIN_DIR)
 	@for src in cmd/*.go; do \
 		name="$$(basename "$$src" .go)"; \
@@ -22,22 +23,24 @@ build-cmd: ## Build binaries from cmd/*.go
 	done
 
 build-examples: ## Build binaries from examples/*.go
+	@echo "Building examples"
 	@mkdir -p $(BIN_DIR)
 	@for src in examples/**/*.go; do \
 		name="$$(basename "$$src" .go)"; \
 		go build -o "$(BIN_DIR)/example-$$name" "$$src"; \
 	done
 
-lint: ## Run linter (golangci-lint preferred, fallback golint)
-	@echo "Running linter on packages: $(PKGS)"
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run $(PKGS); \
-	elif command -v golint >/dev/null 2>&1; then \
-		golint $(PKGS); \
-	else \
-		echo "No Go linter found. Install golangci-lint or golint."; \
-		exit 1; \
-	fi
+fmt: ## Format Go code with gofmt
+	@echo "Running gofmt"
+	@gofmt -w .
+
+lint: ## Run staticcheck
+	@echo "Running staticcheck"
+	@staticcheck $(PKGS)
+
+lint-ci: ## Run golangci-lint
+	@echo "Running golangci-lint"
+	@golangci-lint run $(PKGS)
 
 vet: ## Run go vet on project packages
 	@echo "Running go vet on packages: $(PKGS)"
@@ -47,7 +50,16 @@ test: ## Run all tests on project packages
 	@echo "Running tests on packages: $(PKGS)"
 	@go test $(PKGS)
 
-check: lint vet test ## Run lint + vet + test
+coverage: ## Run tests with coverage (writes coverage.out)
+	@echo "Running coverage"
+	@go test -count=1 -race -coverprofile=coverage.out -covermode=atomic ./...
+
+cover: coverage ## Open coverage report in browser
+	@echo "Opening coverage report"
+	@go tool cover -html=coverage.out
+
+check: fmt lint lint-ci vet test coverage ## Run lint + vet + test
 
 clean: ## Remove generated binaries
+	@echo "Cleaning up"
 	@rm -rf $(BIN_DIR)

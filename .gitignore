@@ -6,3 +6,4 @@ bin/
 
 # Ignore coverage files
 cover.*
+coverage.*

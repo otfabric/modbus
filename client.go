@@ -88,15 +88,16 @@ type ClientConfiguration struct {
 
 // Modbus client object.
 type ModbusClient struct {
-	conf          ClientConfiguration
-	logger        *logger
-	lock          sync.Mutex
-	isOpen        bool
-	endianness    Endianness
-	wordOrder     WordOrder
-	transport     transport
-	transportType transportType
-	pool          *connPool // non-nil when MaxConns > 1 and transport is TCP-based
+	conf                      ClientConfiguration
+	logger                    *logger
+	lock                      sync.Mutex
+	isOpen                    bool
+	endianness                Endianness
+	wordOrder                 WordOrder
+	transport                 transport
+	transportType             transportType
+	pool                      *connPool // non-nil when MaxConns > 1 and transport is TCP-based
+	lastResponseTransactionID uint16    // last MBAP transaction ID from response (TCP only; 0 for RTU)
 }
 
 // DeviceIdentificationObject represents one object from an FC43/MEI response.
@@ -531,6 +532,14 @@ func (mc *ModbusClient) Close() (err error) {
 	mc.isOpen = false
 
 	return
+}
+
+// LastTransactionID returns the MBAP transaction ID of the last successful response (TCP only).
+// For RTU and other transports it is always 0. Useful for diagnostics and correlating with captures.
+func (mc *ModbusClient) LastTransactionID() uint16 {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	return mc.lastResponseTransactionID
 }
 
 // Sets the encoding (endianness and word ordering) of subsequent requests.
@@ -2771,6 +2780,8 @@ func (mc *ModbusClient) executeOnce(ctx context.Context, req *pdu) (res *pdu, er
 		}
 		return
 	}
+
+	mc.lastResponseTransactionID = res.responseTransactionID
 
 	// make sure the source unit id matches that of the request
 	if (res.functionCode&0x80) == 0x00 && res.unitId != req.unitId {

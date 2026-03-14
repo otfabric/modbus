@@ -11,6 +11,9 @@ import (
 const (
 	maxTCPFrameLength int = 260
 	mbapHeaderLength  int = 7
+	// mbapLengthMin and mbapLengthMax: MBAP length field = unit_id + function_code + payload (per Modbus spec).
+	mbapLengthMin = 2
+	mbapLengthMax = 254
 )
 
 type tcpTransport struct {
@@ -54,6 +57,11 @@ func (tt *tcpTransport) ExecuteRequest(ctx context.Context, req *pdu) (res *pdu,
 	err = tt.socket.SetDeadline(deadline)
 	if err != nil {
 		return
+	}
+
+	// validate MBAP length before send (length = 2 + len(payload))
+	if len(req.payload)+2 > mbapLengthMax {
+		return nil, fmt.Errorf("%w: would be %d", ErrInvalidMBAPLength, len(req.payload)+2)
 	}
 
 	// increase the transaction ID counter
@@ -140,6 +148,7 @@ func (tt *tcpTransport) readResponse() (res *pdu, err error) {
 			continue
 		}
 
+		res.responseTransactionID = txnId
 		break
 	}
 
@@ -167,23 +176,16 @@ func (tt *tcpTransport) readMBAPFrame() (p *pdu, txnId uint16, err error) {
 	// store the source unit id
 	unitId = rxbuf[6]
 
-	// determine how many more bytes we need to read
-	bytesNeeded = int(bytesToUint16(BigEndian, rxbuf[4:6]))
+	// MBAP length field = unit_id + function_code + payload (2..254 per spec)
+	mbapLen := int(bytesToUint16(BigEndian, rxbuf[4:6]))
+	if mbapLen < mbapLengthMin || mbapLen > mbapLengthMax {
+		tt.logger.Warningf("invalid MBAP length %d (expected %d-%d)", mbapLen, mbapLengthMin, mbapLengthMax)
+		err = fmt.Errorf("%w: received %d", ErrInvalidMBAPLength, mbapLen)
+		return
+	}
 
 	// the byte count includes the unit ID field, which we already have
-	bytesNeeded--
-
-	// never read more than the max allowed frame length
-	if bytesNeeded+mbapHeaderLength > maxTCPFrameLength {
-		err = ErrProtocolError
-		return
-	}
-
-	// an MBAP length of 0 is illegal
-	if bytesNeeded <= 0 {
-		err = ErrProtocolError
-		return
-	}
+	bytesNeeded = mbapLen - 1
 
 	// read the PDU
 	rxbuf = make([]byte, bytesNeeded)

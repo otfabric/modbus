@@ -48,6 +48,8 @@ transport type and the address using the `<scheme>://<address>` format.
 | `tcp+tls://<host:port>` | Modbus TCP over TLS (MBAPS) | ✓ | ✓ |
 | `udp://<host:port>` | Modbus TCP framing over UDP | ✓ | — |
 
+**Standard ports:** `PortModbusTCP` (502) and `PortModbusTLS` (802) are package constants for use in URLs or documentation. Modbus RTU over TCP has no standard port.
+
 ---
 
 ## 2. Client
@@ -114,12 +116,13 @@ type ClientConfiguration struct {
 func NewClient(conf *ClientConfiguration) (*ModbusClient, error)
 func (mc *ModbusClient) Open() error
 func (mc *ModbusClient) Close() error
+func (mc *ModbusClient) LastTransactionID() uint16
 ```
 
 `NewClient` validates the URL and configuration but does **not** open a network
 connection. Call `Open` to establish the transport. `Open` is idempotent — calling
 it on an already-open client is a no-op. `Close` closes all connections (or drains
-the pool when `MaxConns > 1`).
+the pool when `MaxConns > 1`). `LastTransactionID` returns the MBAP transaction ID of the last successful TCP response; it is 0 for RTU and other non-TCP transports. Useful for diagnostics and correlating with packet captures.
 
 ```go
 client, err := modbus.NewClient(&modbus.ClientConfiguration{
@@ -1103,11 +1106,14 @@ var (
     ErrBadUnitId               // response unit ID does not match request
     ErrBadTransactionId        // TCP transaction ID mismatch
     ErrUnknownProtocolId       // non-zero MBAP protocol identifier
+    ErrInvalidMBAPLength      // MBAP length &lt; 2 or &gt; 254 (error may wrap value)
     ErrUnexpectedParameters          // invalid arguments passed to a client method
     ErrSunSpecModelChainInvalid      // malformed or non-progressing SunSpec model chain
     ErrSunSpecModelChainLimitExceeded // SunSpec model chain exceeded MaxAddressSpan
 )
 ```
+
+For Modbus TCP, the MBAP length field (unit_id + function_code + payload) must be between 2 and 254 per the spec; otherwise the transport returns an error wrapping `ErrInvalidMBAPLength` (the received length is included in the error message).
 
 ### `ExceptionError` — structured exception details
 

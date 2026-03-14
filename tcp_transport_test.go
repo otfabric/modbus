@@ -1,6 +1,7 @@
 package modbus
 
 import (
+	"errors"
 	"io"
 	"net"
 	"testing"
@@ -96,6 +97,9 @@ func TestTCPTransportReadResponse(t *testing.T) {
 		t.Errorf("expected {0x12, 0x34} as payload, got {0x%02x, 0x%02x}",
 			res.payload[0], res.payload[1])
 	}
+	if res.responseTransactionID != 0x9218 {
+		t.Errorf("expected responseTransactionID 0x9218, got 0x%04x", res.responseTransactionID)
+	}
 
 	// read a frame with an unexpected transaction id followed by a frame with a
 	// matching transaction id: the first frame should be silently skipped
@@ -133,7 +137,7 @@ func TestTCPTransportReadResponse(t *testing.T) {
 
 	// read a frame with an illegal length, preceded by a frame with an unexpected
 	// protocol ID. While the first frame should be skipped without error,
-	// the second should yield an ErrProtocolError.
+	// the second should yield ErrInvalidMBAPLength.
 	txchan <- []byte{
 		0x92, 0x18, // transaction identifier (big endian)
 		0x00, 0x01, // protocol identifier
@@ -148,8 +152,8 @@ func TestTCPTransportReadResponse(t *testing.T) {
 		0x31, // unit id
 	}
 	_, err = tt.readResponse()
-	if err != ErrProtocolError {
-		t.Errorf("readResponse() should have returned ErrProtocolError, got %v", err)
+	if !errors.Is(err, ErrInvalidMBAPLength) {
+		t.Errorf("readResponse() should have returned ErrInvalidMBAPLength, got %v", err)
 	}
 
 	// read a valid frame again
@@ -188,16 +192,16 @@ func TestTCPTransportReadResponse(t *testing.T) {
 		}
 	}
 
-	// read a huge frame
+	// read a frame with MBAP length > 254 (invalid)
 	txchan <- []byte{
 		0x92, 0x18, // transaction identifier (big endian)
 		0x00, 0x00, // protocol identifier
-		0x10, 0x0a, // length (big endian)
+		0x10, 0x0a, // length (big endian) = 4106
 		0x31, // unit id
 	}
 	_, err = tt.readResponse()
-	if err != ErrProtocolError {
-		t.Errorf("readResponse() should have returned ErrProtocolError, got %v", err)
+	if !errors.Is(err, ErrInvalidMBAPLength) {
+		t.Errorf("readResponse() should have returned ErrInvalidMBAPLength, got %v", err)
 	}
 
 	_ = p1.Close()
@@ -255,10 +259,10 @@ func TestTCPTransportReadRequest(t *testing.T) {
 		t.Errorf("tt.lastTxnId should have been 0x0a00, saw 0x%02x", tt.lastTxnId)
 	}
 
-	// read the second frame
+	// read the second frame (illegal MBAP length)
 	req, err = tt.ReadRequest()
-	if req != nil || err != ErrProtocolError {
-		t.Errorf("ReadRequest() should have returned {nil, ErrProtocolError}, got {%v, %v}", req, err)
+	if req != nil || !errors.Is(err, ErrInvalidMBAPLength) {
+		t.Errorf("ReadRequest() should have returned {nil, ErrInvalidMBAPLength}, got {%v, %v}", req, err)
 	}
 	if tt.lastTxnId != 0x0a00 {
 		t.Errorf("tt.lastTxnId should have been 0x0a00, saw 0x%02x", tt.lastTxnId)

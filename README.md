@@ -2,9 +2,9 @@
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
-[![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/modbus)](https://goreportcard.com/report/github.com/otfabric/modbus)
+[![Go Report Card](https://goreportcard.com/badge/github.com/otfabric/modbus?cache=false)](https://goreportcard.com/report/github.com/otfabric/modbus)
 [![CI](https://github.com/otfabric/modbus/actions/workflows/ci.yml/badge.svg)](https://github.com/otfabric/modbus/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v0.1.0-blue.svg)](https://github.com/otfabric/modbus/releases)
+[![Release](https://img.shields.io/github/v/release/otfabric/modbus?display_name=tag)](https://github.com/otfabric/modbus/releases)
 
 A production-ready Go implementation of the Modbus application protocol, providing both **client** and **server** capabilities. No C dependencies, no CGo — just Go.
 
@@ -71,6 +71,8 @@ or `ServerConfiguration.URL`.
 > **Note:** UDP transports are not part of the official Modbus specification. Both
 > MBAP-over-UDP (`udp://`) and RTU-over-UDP (`rtuoverudp://`) are provided because
 > different vendors use different framing conventions. When unsure, try both.
+>
+> Standard ports: use `modbus.PortModbusTCP` (502) or `modbus.PortModbusTLS` (802) in URLs or docs; RTU over TCP has no standard port.
 
 ---
 
@@ -194,6 +196,7 @@ be tested with `errors.Is`:
 | `ErrBadUnitId` | Response unit ID does not match request |
 | `ErrBadTransactionId` | TCP transaction ID mismatch (MBAP) |
 | `ErrUnknownProtocolId` | Non-zero MBAP protocol identifier |
+| `ErrInvalidMBAPLength` | MBAP length &lt; 2 or &gt; 254 (TCP) |
 | `ErrUnexpectedParameters` | Invalid arguments passed to a client method |
 | `ErrSunSpecModelChainInvalid` | Malformed or non-progressing SunSpec model chain |
 | `ErrSunSpecModelChainLimitExceeded` | SunSpec model chain exceeded `MaxAddressSpan` |

@@ -18,9 +18,10 @@ type MEIType uint8
 //
 
 type pdu struct {
-	unitId       uint8
-	functionCode FunctionCode
-	payload      []byte
+	unitId                uint8
+	functionCode          FunctionCode
+	payload               []byte
+	responseTransactionID uint16 // set by TCP transport on response; 0 for RTU
 }
 
 //
@@ -55,7 +56,10 @@ const (
 	FCReadInputRegisters     FunctionCode = 0x04
 	FCWriteSingleCoil        FunctionCode = 0x05
 	FCWriteSingleRegister    FunctionCode = 0x06
+	FCReadExceptionStatus    FunctionCode = 0x07
 	FCDiagnostics            FunctionCode = 0x08
+	FCGetCommEventCounters   FunctionCode = 0x0B
+	FCGetCommEventLog        FunctionCode = 0x0C
 	FCWriteMultipleCoils     FunctionCode = 0x0F
 	FCWriteMultipleRegisters FunctionCode = 0x10
 	FCReportServerID         FunctionCode = 0x11
@@ -74,7 +78,10 @@ var functionCodeNames = map[FunctionCode]string{
 	FCReadInputRegisters:     "Read Input Registers",
 	FCWriteSingleCoil:        "Write Single Coil",
 	FCWriteSingleRegister:    "Write Single Register",
+	FCReadExceptionStatus:    "Read Exception Status",
 	FCDiagnostics:            "Diagnostics",
+	FCGetCommEventCounters:   "Get Comm Event Counters",
+	FCGetCommEventLog:        "Get Comm Event Log",
 	FCWriteMultipleCoils:     "Write Multiple Coils",
 	FCWriteMultipleRegisters: "Write Multiple Registers",
 	FCReportServerID:         "Report Server ID",
@@ -124,7 +131,10 @@ func KnownFunctionCodes() []FunctionCode {
 		FCReadInputRegisters,
 		FCWriteSingleCoil,
 		FCWriteSingleRegister,
+		FCReadExceptionStatus,
 		FCDiagnostics,
+		FCGetCommEventCounters,
+		FCGetCommEventLog,
 		FCWriteMultipleCoils,
 		FCWriteMultipleRegisters,
 		FCReportServerID,
@@ -226,6 +236,18 @@ func (ec ExceptionCode) ToError() error {
 }
 
 //
+// Standard ports (IANA / common practice)
+//
+
+// PortModbusTCP is the well-known port for Modbus/TCP (IANA registered).
+const PortModbusTCP = 502
+
+// PortModbusTLS is the well-known port for Modbus/TCP Security (Modbus over TLS).
+const PortModbusTLS = 802
+
+// Modbus RTU over TCP has no standard port; use a URL like rtuovertcp://host:port with a port of your choice.
+
+//
 // Protocol Limits
 //
 
@@ -263,6 +285,7 @@ var (
 	ErrBadUnitId                      = errors.New("modbus: bad unit id")
 	ErrBadTransactionId               = errors.New("modbus: bad transaction id")
 	ErrUnknownProtocolId              = errors.New("modbus: unknown protocol identifier")
+	ErrInvalidMBAPLength              = errors.New("modbus: invalid mbap length")
 	ErrUnexpectedParameters           = errors.New("modbus: unexpected parameters")
 	ErrSunSpecModelChainInvalid       = errors.New("modbus: sunspec model chain invalid")
 	ErrSunSpecModelChainLimitExceeded = errors.New("modbus: sunspec model chain limit exceeded")
