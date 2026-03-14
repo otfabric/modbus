@@ -1,3 +1,54 @@
+# Release v0.2.5
+
+**Date:** 2026-03-14
+**Previous release:** v0.2.4
+
+## Summary
+
+Add bitfield and masked-register operations for devices that expose booleans and enums inside holding or input registers (status bits, alarm words, control words, mode enums). Read single or multiple bits from a register; write one bit or update a masked field without clobbering adjacent bits.
+
+## Changes
+
+### Added
+
+- **ReadRegisterBit(ctx, unitId, addr, bitIndex, regType)** — Reads one register (FC03/FC04) and returns the bit at `bitIndex` (0 = LSB, 15 = MSB). Supports both holding and input registers.
+- **ReadRegisterBits(ctx, unitId, addr, bitIndex, count, regType)** — Reads one register and returns `count` bits (1–16) starting at `bitIndex`. Use for multi-bit mode enums.
+- **WriteRegisterBit(ctx, unitId, addr, bitIndex, value)** — Read-modify-write: reads holding register, sets or clears one bit, writes back (FC03 + FC16). Other bits unchanged.
+- **UpdateRegisterMask(ctx, unitId, addr, mask, value)** — Read-modify-write: `newVal = (old & ^mask) | (value & mask)`. Only bits set in `mask` are updated; use for control words without affecting adjacent bits.
+
+Invalid `bitIndex` (> 15) or invalid `ReadRegisterBits` range returns `ErrUnexpectedParameters`.
+
+### Unchanged
+
+- Coils and discrete inputs unchanged. New methods are additive.
+
+---
+
+# Release v0.2.4
+
+**Date:** 2026-03-14
+**Previous release:** v0.2.3
+
+## Summary
+
+Add typed write helpers that mirror the existing read helpers: signed integers (Int16/32/48/64), ASCII (normal, fixed-width, reverse), BCD and packed BCD, and raw/address types (Uint8s, IPAddr, IPv6Addr, EUI48). All use FC16 (Write Multiple Registers) with the same encoding conventions as the corresponding read methods.
+
+## Changes
+
+### Added
+
+- **Signed integer writes** — `WriteInt16`, `WriteInt16s`, `WriteInt32`, `WriteInt32s`, `WriteInt48`, `WriteInt48s`, `WriteInt64`, `WriteInt64s`. Encoding follows `SetEncoding`; empty slice returns `ErrUnexpectedParameters`.
+- **ASCII writes** — `WriteAscii` (trim trailing spaces, same layout as ReadAscii), `WriteAsciiFixed` (no trim), `WriteAsciiReverse` (same layout as ReadAsciiReverse).
+- **BCD writes** — `WriteBCD` (one byte per digit), `WritePackedBCD` (two digits per byte; odd byte count padded for register alignment). Non-digit characters return an error.
+- **Raw and address writes** — `WriteUint8s` (raw bytes, no reordering), `WriteIPAddr` (4 bytes from `net.IP.To4()`), `WriteIPv6Addr` (16 bytes), `WriteEUI48` (6 bytes from `net.HardwareAddr`). Invalid input returns `ErrUnexpectedParameters`.
+- **Encoding helpers** (internal) — `uint48ToBytes`, `asciiToBytes`, `asciiToBytesReverse`, `bcdToBytes`, `packedBCDToBytes` for use by the write methods.
+
+### Unchanged
+
+- Existing write and read behaviour unchanged. New methods are additive.
+
+---
+
 # Release v0.2.3
 
 **Date:** 2026-03-12

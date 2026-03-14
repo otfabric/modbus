@@ -88,12 +88,12 @@ cancellation control independent of the connection lifecycle.
 |---|---|---|---|
 | 01 | 0x01 | Read Coils | `ReadCoil`, `ReadCoils` |
 | 02 | 0x02 | Read Discrete Inputs | `ReadDiscreteInput`, `ReadDiscreteInputs` |
-| 03 | 0x03 | Read Holding Registers | `ReadRegister`, `ReadRegisters`, `ReadUint16(s)`, `ReadUint16Pair`, `ReadInt16(s)`, `ReadUint32(s)`, `ReadInt32(s)`, `ReadUint48(s)`, `ReadInt48(s)`, `ReadUint64(s)`, `ReadInt64(s)`, `ReadFloat32(s)`, `ReadFloat64(s)`, `ReadAscii`, `ReadAsciiFixed`, `ReadAsciiReverse`, `ReadBCD`, `ReadPackedBCD`, `ReadBytes`, `ReadRawBytes`, `ReadUint8s`, `ReadIPAddr`, `ReadIPv6Addr`, `ReadEUI48` |
+| 03 | 0x03 | Read Holding Registers | `ReadRegister`, `ReadRegisters`, `ReadUint16(s)`, `ReadUint16Pair`, `ReadRegisterBit`, `ReadRegisterBits`, `ReadInt16(s)`, … (see API) |
 | 04 | 0x04 | Read Input Registers | same methods as FC03, passing `InputRegister` |
 | 05 | 0x05 | Write Single Coil | `WriteCoil`, `WriteCoilValue` |
 | 06 | 0x06 | Write Single Register | `WriteRegister` |
 | 15 | 0x0F | Write Multiple Coils | `WriteCoils` |
-| 16 | 0x10 | Write Multiple Registers | `WriteRegisters`, `WriteUint32(s)`, `WriteUint64(s)`, `WriteFloat32(s)`, `WriteFloat64(s)`, `WriteBytes`, `WriteRawBytes` |
+| 16 | 0x10 | Write Multiple Registers | `WriteRegisters`, `WriteRegisterBit`, `UpdateRegisterMask`, `WriteUint32(s)`, `WriteInt16(s)`, … (see API) |
 | 20 | 0x14 | Read File Record | `ReadFileRecords` |
 | 21 | 0x15 | Write File Record | `WriteFileRecords` |
 | 08 | 0x08 | Diagnostics | `Diagnostics` |

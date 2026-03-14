@@ -2,6 +2,7 @@ package modbus
 
 import (
 	"encoding/binary"
+	"errors"
 	"math"
 	"strings"
 )
@@ -337,4 +338,104 @@ func bytesToPackedBCD(in []byte) string {
 	}
 
 	return sb.String()
+}
+
+// uint48ToBytes encodes a 48-bit value (lower 48 bits of u48) into 6 bytes for 3 registers.
+// Endianness and wordOrder must match the inverse of bytesToUint48s.
+func uint48ToBytes(endianness Endianness, wordOrder WordOrder, u48 uint64) (out []byte) {
+	u48 = u48 & 0xFFFFFFFFFFFF
+	out = make([]byte, 6)
+	switch endianness {
+	case BigEndian:
+		if wordOrder == HighWordFirst {
+			out[0] = byte(u48 >> 40)
+			out[1] = byte(u48 >> 32)
+			out[2] = byte(u48 >> 24)
+			out[3] = byte(u48 >> 16)
+			out[4] = byte(u48 >> 8)
+			out[5] = byte(u48)
+		} else {
+			out[0] = byte(u48 >> 8)
+			out[1] = byte(u48)
+			out[2] = byte(u48 >> 24)
+			out[3] = byte(u48 >> 16)
+			out[4] = byte(u48 >> 40)
+			out[5] = byte(u48 >> 32)
+		}
+	case LittleEndian:
+		if wordOrder == LowWordFirst {
+			out[0] = byte(u48)
+			out[1] = byte(u48 >> 8)
+			out[2] = byte(u48 >> 16)
+			out[3] = byte(u48 >> 24)
+			out[4] = byte(u48 >> 32)
+			out[5] = byte(u48 >> 40)
+		} else {
+			out[0] = byte(u48 >> 32)
+			out[1] = byte(u48 >> 40)
+			out[2] = byte(u48 >> 16)
+			out[3] = byte(u48 >> 24)
+			out[4] = byte(u48)
+			out[5] = byte(u48 >> 8)
+		}
+	}
+	return out
+}
+
+// asciiToBytes produces register bytes for ASCII: high byte of each register = first char, low = second.
+// Length is padded to even (one zero byte) if needed.
+func asciiToBytes(s string) []byte {
+	b := []byte(s)
+	if len(b)%2 == 1 {
+		b = append(b, 0)
+	}
+	return b
+}
+
+// asciiToBytesReverse produces register bytes for ASCII with byte order reversed per 16-bit word
+// (low byte first, then high byte). Same convention as ReadAsciiReverse. Padded to even length if needed.
+func asciiToBytesReverse(s string) []byte {
+	b := []byte(s)
+	if len(b)%2 == 1 {
+		b = append(b, 0)
+	}
+	for i := 0; i+1 < len(b); i += 2 {
+		b[i], b[i+1] = b[i+1], b[i]
+	}
+	return b
+}
+
+var errBCDDigit = errors.New("modbus: BCD string must contain only digits 0-9")
+
+// bcdToBytes encodes a string of decimal digits (0-9) as one byte per digit, MSB first.
+func bcdToBytes(s string) ([]byte, error) {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return nil, errBCDDigit
+		}
+		out = append(out, byte(r-'0'))
+	}
+	return out, nil
+}
+
+// packedBCDToBytes encodes a string of decimal digits (0-9) as packed BCD (two digits per byte, high nibble first).
+// If len(s) is odd, the last nibble is 0.
+func packedBCDToBytes(s string) ([]byte, error) {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return nil, errBCDDigit
+		}
+	}
+	n := (len(s) + 1) / 2
+	out := make([]byte, n)
+	for i := 0; i < len(s); i += 2 {
+		hi := s[i] - '0'
+		lo := byte(0)
+		if i+1 < len(s) {
+			lo = s[i+1] - '0'
+		}
+		out[i/2] = (hi << 4) | lo
+	}
+	return out, nil
 }

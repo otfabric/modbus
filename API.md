@@ -381,6 +381,29 @@ For both methods, **quantity is the number of bytes** to read (the library reads
 `ReadRawBytes` returns bytes exactly as received, deferring all interpretation to
 the caller.
 
+#### Bitfield / masked register operations
+
+Many devices expose booleans and enums inside holding (or input) registers rather than coils. The following helpers read or update individual bits or bit ranges without clobbering adjacent bits.
+
+```go
+// FC03/FC04 — read one bit from a register (bitIndex 0 = LSB, 15 = MSB)
+func (mc *ModbusClient) ReadRegisterBit(ctx context.Context, unitId uint8, addr uint16, bitIndex uint8, regType RegType) (bool, error)
+
+// FC03/FC04 — read count bits from one register starting at bitIndex (count 1–16, bitIndex+count ≤ 16)
+func (mc *ModbusClient) ReadRegisterBits(ctx context.Context, unitId uint8, addr uint16, bitIndex, count uint8, regType RegType) ([]bool, error)
+
+// FC03 + FC16 — read register, set or clear one bit, write back (holding registers only)
+func (mc *ModbusClient) WriteRegisterBit(ctx context.Context, unitId uint8, addr uint16, bitIndex uint8, value bool) error
+
+// FC03 + FC16 — read-modify-write: newVal = (old & ^mask) | (value & mask) (holding registers only)
+func (mc *ModbusClient) UpdateRegisterMask(ctx context.Context, unitId uint8, addr uint16, mask, value uint16) error
+```
+
+- **ReadRegisterBit** — Reads one register and returns `(reg>>bitIndex)&1 != 0`. Use for status bits, alarm bits, or single enum bits. `bitIndex > 15` returns `ErrUnexpectedParameters`.
+- **ReadRegisterBits** — Reads one register and returns a slice of `count` booleans from `bitIndex` upward. Use for multi-bit mode enums. Invalid `count` or `bitIndex+count > 16` returns `ErrUnexpectedParameters`.
+- **WriteRegisterBit** — Read-modify-write: reads the holding register, sets or clears the bit at `bitIndex`, writes back. Other bits unchanged. `bitIndex > 15` returns `ErrUnexpectedParameters`.
+- **UpdateRegisterMask** — Read-modify-write: only the bits set in `mask` are updated to the corresponding bits in `value`; all other bits are preserved. Use for control words and mode fields without affecting adjacent bits.
+
 ### 2.5 Write operations
 
 #### Coils
@@ -425,6 +448,50 @@ func (mc *ModbusClient) WriteUint64s(ctx context.Context, unitId uint8, addr uin
 func (mc *ModbusClient) WriteFloat64(ctx context.Context, unitId uint8, addr uint16, value float64) error
 func (mc *ModbusClient) WriteFloat64s(ctx context.Context, unitId uint8, addr uint16, values []float64) error
 ```
+
+#### Signed integer write helpers (FC16)
+
+Same encoding as the corresponding read methods; use `SetEncoding` for byte/word order.
+
+```go
+func (mc *ModbusClient) WriteInt16(ctx context.Context, unitId uint8, addr uint16, value int16) error
+func (mc *ModbusClient) WriteInt16s(ctx context.Context, unitId uint8, addr uint16, values []int16) error
+func (mc *ModbusClient) WriteInt32(ctx context.Context, unitId uint8, addr uint16, value int32) error
+func (mc *ModbusClient) WriteInt32s(ctx context.Context, unitId uint8, addr uint16, values []int32) error
+func (mc *ModbusClient) WriteInt48(ctx context.Context, unitId uint8, addr uint16, value int64) error
+func (mc *ModbusClient) WriteInt48s(ctx context.Context, unitId uint8, addr uint16, values []int64) error
+func (mc *ModbusClient) WriteInt64(ctx context.Context, unitId uint8, addr uint16, value int64) error
+func (mc *ModbusClient) WriteInt64s(ctx context.Context, unitId uint8, addr uint16, values []int64) error
+```
+
+- **WriteInt16(s)** — 1 register per value. Empty slice returns `ErrUnexpectedParameters`.
+- **WriteInt32(s)** — 2 registers per value.
+- **WriteInt48(s)** — 3 registers per value (48-bit sign-extended).
+- **WriteInt64(s)** — 4 registers per value.
+
+#### ASCII, BCD, and address write helpers (FC16)
+
+```go
+func (mc *ModbusClient) WriteAscii(ctx context.Context, unitId uint8, addr uint16, s string) error
+func (mc *ModbusClient) WriteAsciiFixed(ctx context.Context, unitId uint8, addr uint16, s string) error
+func (mc *ModbusClient) WriteAsciiReverse(ctx context.Context, unitId uint8, addr uint16, s string) error
+func (mc *ModbusClient) WriteBCD(ctx context.Context, unitId uint8, addr uint16, s string) error
+func (mc *ModbusClient) WritePackedBCD(ctx context.Context, unitId uint8, addr uint16, s string) error
+func (mc *ModbusClient) WriteUint8s(ctx context.Context, unitId uint8, addr uint16, values []uint8) error
+func (mc *ModbusClient) WriteIPAddr(ctx context.Context, unitId uint8, addr uint16, ip net.IP) error
+func (mc *ModbusClient) WriteIPv6Addr(ctx context.Context, unitId uint8, addr uint16, ip net.IP) error
+func (mc *ModbusClient) WriteEUI48(ctx context.Context, unitId uint8, addr uint16, mac net.HardwareAddr) error
+```
+
+- **WriteAscii** — Same layout as ReadAscii (high byte first per register). Trims trailing spaces; odd length padded with zero. Empty after trim returns `ErrUnexpectedParameters`.
+- **WriteAsciiFixed** — Same as WriteAscii but no trimming; use for fixed-width strings. Empty string returns `ErrUnexpectedParameters`.
+- **WriteAsciiReverse** — Same layout as ReadAsciiReverse (low byte first per register).
+- **WriteBCD** — One byte per digit (0–9). Non-digit in `s` returns an error (e.g. `modbus: BCD string must contain only digits 0-9`).
+- **WritePackedBCD** — Two digits per byte, high nibble first. Odd byte count padded for register alignment. Non-digit returns error.
+- **WriteUint8s** — Raw bytes in wire order (no reordering). Empty slice returns `ErrUnexpectedParameters`.
+- **WriteIPAddr** — 4 bytes (2 registers) from `ip.To4()`. Nil or non-IPv4 returns `ErrUnexpectedParameters`.
+- **WriteIPv6Addr** — 16 bytes (8 registers) from `ip.To16()`.
+- **WriteEUI48** — 6 bytes (3 registers). Nil or length ≠ 6 returns `ErrUnexpectedParameters`.
 
 #### Raw bytes
 

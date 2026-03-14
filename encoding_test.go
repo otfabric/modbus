@@ -826,3 +826,65 @@ func TestBytesToPackedBCD(t *testing.T) {
 		t.Errorf("expected \"12345678\", got %q", result)
 	}
 }
+
+func TestUint48ToBytesRoundtrip(t *testing.T) {
+	u48 := uint64(0x123456789ABC)
+	for _, e := range []Endianness{BigEndian, LittleEndian} {
+		for _, w := range []WordOrder{HighWordFirst, LowWordFirst} {
+			b := uint48ToBytes(e, w, u48)
+			if len(b) != 6 {
+				t.Fatalf("uint48ToBytes: expected 6 bytes, got %d", len(b))
+			}
+			decoded := bytesToUint48s(e, w, b)
+			if len(decoded) != 1 || decoded[0] != u48 {
+				t.Errorf("uint48ToBytes roundtrip: endianness=%v wordOrder=%v: got %x", e, w, decoded)
+			}
+		}
+	}
+}
+
+func TestAsciiToBytes(t *testing.T) {
+	b := asciiToBytes("Hi")
+	if len(b) != 2 || b[0] != 'H' || b[1] != 'i' {
+		t.Errorf("asciiToBytes(\"Hi\") = %v", b)
+	}
+	b = asciiToBytes("H")
+	if len(b) != 2 || b[0] != 'H' || b[1] != 0 {
+		t.Errorf("asciiToBytes(\"H\") = %v (expected pad)", b)
+	}
+}
+
+func TestAsciiToBytesReverse(t *testing.T) {
+	b := asciiToBytesReverse("Hi")
+	// Reverse: low byte first per word → 'i','H'
+	if len(b) != 2 || b[0] != 'i' || b[1] != 'H' {
+		t.Errorf("asciiToBytesReverse(\"Hi\") = %v", b)
+	}
+	if bytesToAsciiReverse(b) != "Hi" {
+		t.Errorf("roundtrip: got %q", bytesToAsciiReverse(b))
+	}
+}
+
+func TestBcdToBytes(t *testing.T) {
+	b, err := bcdToBytes("1234")
+	if err != nil || len(b) != 4 || b[0] != 1 || b[3] != 4 {
+		t.Errorf("bcdToBytes(\"1234\") = %v, %v", b, err)
+	}
+	if _, err := bcdToBytes("12a4"); err == nil {
+		t.Error("bcdToBytes(non-digit) should error")
+	}
+}
+
+func TestPackedBCDToBytes(t *testing.T) {
+	b, err := packedBCDToBytes("92")
+	if err != nil || len(b) != 1 || b[0] != 0x92 {
+		t.Errorf("packedBCDToBytes(\"92\") = %v, %v", b, err)
+	}
+	b, _ = packedBCDToBytes("1234")
+	if len(b) != 2 || b[0] != 0x12 || b[1] != 0x34 {
+		t.Errorf("packedBCDToBytes(\"1234\") = %v", b)
+	}
+	if _, err := packedBCDToBytes("9x"); err == nil {
+		t.Error("packedBCDToBytes(non-digit) should error")
+	}
+}

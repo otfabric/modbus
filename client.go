@@ -839,6 +839,73 @@ func (mc *ModbusClient) ReadUint16Pair(ctx context.Context, unitId uint8, addr u
 	return [2]uint16{regs[0], regs[1]}, nil
 }
 
+const maxRegisterBitIndex = 15
+
+// ReadRegisterBit reads one register (FC03/FC04) and returns the value of the bit at bitIndex (0 = LSB, 15 = MSB).
+// Useful for status bits, alarm bits, and enums packed in a single register.
+func (mc *ModbusClient) ReadRegisterBit(ctx context.Context, unitId uint8, addr uint16, bitIndex uint8, regType RegType) (bool, error) {
+	if bitIndex > maxRegisterBitIndex {
+		return false, ErrUnexpectedParameters
+	}
+	reg, err := mc.ReadRegister(ctx, unitId, addr, regType)
+	if err != nil {
+		return false, err
+	}
+	return (reg>>bitIndex)&1 != 0, nil
+}
+
+// ReadRegisterBits reads one register (FC03/FC04) and returns count bits starting at bitIndex (0 = LSB).
+// count must be 1–16 and bitIndex+count must not exceed 16. Useful for multi-bit fields (e.g. mode enums).
+func (mc *ModbusClient) ReadRegisterBits(ctx context.Context, unitId uint8, addr uint16, bitIndex, count uint8, regType RegType) ([]bool, error) {
+	if count == 0 || count > 16 || bitIndex > maxRegisterBitIndex || uint16(bitIndex)+uint16(count) > 16 {
+		return nil, ErrUnexpectedParameters
+	}
+	reg, err := mc.ReadRegister(ctx, unitId, addr, regType)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]bool, count)
+	for i := uint8(0); i < count; i++ {
+		out[i] = (reg>>(bitIndex+i))&1 != 0
+	}
+	return out, nil
+}
+
+// WriteRegisterBit reads the register at addr (FC03), sets or clears the bit at bitIndex (0 = LSB, 15 = MSB),
+// and writes the result back (FC16). Other bits are unchanged. Only holding registers are written.
+func (mc *ModbusClient) WriteRegisterBit(ctx context.Context, unitId uint8, addr uint16, bitIndex uint8, value bool) error {
+	if bitIndex > maxRegisterBitIndex {
+		return ErrUnexpectedParameters
+	}
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	mbPayload, err := mc.readRegisters(ctx, unitId, addr, 1, HoldingRegister)
+	if err != nil {
+		return err
+	}
+	reg := bytesToUint16s(mc.endianness, mbPayload)[0]
+	if value {
+		reg |= 1 << bitIndex
+	} else {
+		reg &^= 1 << bitIndex
+	}
+	return mc.writeRegisters(ctx, unitId, addr, uint16ToBytes(mc.endianness, reg))
+}
+
+// UpdateRegisterMask performs a read-modify-write on a single holding register: newVal = (old & ^mask) | (value & mask).
+// Only the bits set in mask are updated; others are preserved. Useful for control words and mode fields without clobbering adjacent bits.
+func (mc *ModbusClient) UpdateRegisterMask(ctx context.Context, unitId uint8, addr uint16, mask, value uint16) error {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	mbPayload, err := mc.readRegisters(ctx, unitId, addr, 1, HoldingRegister)
+	if err != nil {
+		return err
+	}
+	old := bytesToUint16s(mc.endianness, mbPayload)[0]
+	newVal := (old & ^mask) | (value & mask)
+	return mc.writeRegisters(ctx, unitId, addr, uint16ToBytes(mc.endianness, newVal))
+}
+
 // ReadAsciiFixed reads quantity registers (FC03/FC04) as ASCII with the same byte layout as ReadAscii
 // (high byte of each register = first character, low byte = second) but does not strip trailing spaces.
 // Returns the exact fixed-width string. quantity must be greater than zero.
@@ -1794,6 +1861,195 @@ func (mc *ModbusClient) WriteRawBytes(ctx context.Context, unitId uint8, addr ui
 	err = mc.writeBytes(ctx, unitId, addr, values, false)
 
 	return
+}
+
+// WriteInt16 writes a single 16-bit signed register (FC06). Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt16(ctx context.Context, unitId uint8, addr uint16, value int16) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	err = mc.writeRegisters(ctx, unitId, addr, uint16ToBytes(mc.endianness, uint16(value)))
+	return
+}
+
+// WriteInt16s writes multiple 16-bit signed registers (FC16). Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt16s(ctx context.Context, unitId uint8, addr uint16, values []int16) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	var payload []byte
+	for _, v := range values {
+		payload = append(payload, uint16ToBytes(mc.endianness, uint16(v))...)
+	}
+	if len(payload) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, payload)
+}
+
+// WriteInt32 writes a single 32-bit signed value to two consecutive registers (FC16). Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt32(ctx context.Context, unitId uint8, addr uint16, value int32) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	err = mc.writeRegisters(ctx, unitId, addr, uint32ToBytes(mc.endianness, mc.wordOrder, uint32(value)))
+	return
+}
+
+// WriteInt32s writes multiple 32-bit signed values (FC16). Each value occupies 2 registers. Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt32s(ctx context.Context, unitId uint8, addr uint16, values []int32) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	var payload []byte
+	for _, v := range values {
+		payload = append(payload, uint32ToBytes(mc.endianness, mc.wordOrder, uint32(v))...)
+	}
+	if len(payload) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, payload)
+}
+
+// WriteInt48 writes a single 48-bit signed value to three consecutive registers (FC16). Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt48(ctx context.Context, unitId uint8, addr uint16, value int64) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	err = mc.writeRegisters(ctx, unitId, addr, uint48ToBytes(mc.endianness, mc.wordOrder, uint64(value)))
+	return
+}
+
+// WriteInt48s writes multiple 48-bit signed values (FC16). Each value occupies 3 registers. Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt48s(ctx context.Context, unitId uint8, addr uint16, values []int64) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	var payload []byte
+	for _, v := range values {
+		payload = append(payload, uint48ToBytes(mc.endianness, mc.wordOrder, uint64(v))...)
+	}
+	if len(payload) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, payload)
+}
+
+// WriteInt64 writes a single 64-bit signed value to four consecutive registers (FC16). Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt64(ctx context.Context, unitId uint8, addr uint16, value int64) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	err = mc.writeRegisters(ctx, unitId, addr, uint64ToBytes(mc.endianness, mc.wordOrder, uint64(value)))
+	return
+}
+
+// WriteInt64s writes multiple 64-bit signed values (FC16). Each value occupies 4 registers. Encoding is controlled by SetEncoding.
+func (mc *ModbusClient) WriteInt64s(ctx context.Context, unitId uint8, addr uint16, values []int64) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	var payload []byte
+	for _, v := range values {
+		payload = append(payload, uint64ToBytes(mc.endianness, mc.wordOrder, uint64(v))...)
+	}
+	if len(payload) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, payload)
+}
+
+// WriteAscii writes a string as ASCII to registers (FC16). High byte of each register = first character, low = second.
+// Trailing spaces are not written; odd-length strings are padded with one zero byte. Same convention as ReadAscii.
+func (mc *ModbusClient) WriteAscii(ctx context.Context, unitId uint8, addr uint16, s string) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	s = strings.TrimRight(s, " ")
+	if len(s) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, asciiToBytes(s))
+}
+
+// WriteAsciiFixed writes a fixed-width ASCII string to registers (FC16) without trimming. Same byte layout as ReadAsciiFixed.
+// Odd-length strings are padded with one zero byte.
+func (mc *ModbusClient) WriteAsciiFixed(ctx context.Context, unitId uint8, addr uint16, s string) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	if len(s) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, asciiToBytes(s))
+}
+
+// WriteAsciiReverse writes a string as ASCII with byte order reversed per 16-bit word (FC16). Same convention as ReadAsciiReverse.
+func (mc *ModbusClient) WriteAsciiReverse(ctx context.Context, unitId uint8, addr uint16, s string) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	if len(s) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, asciiToBytesReverse(s))
+}
+
+// WriteBCD writes a string of decimal digits (0-9) as BCD, one byte per digit (FC16). Returns an error if s contains non-digits.
+func (mc *ModbusClient) WriteBCD(ctx context.Context, unitId uint8, addr uint16, s string) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	b, err := bcdToBytes(s)
+	if err != nil {
+		return err
+	}
+	if len(b) == 0 {
+		return ErrUnexpectedParameters
+	}
+	return mc.writeRegisters(ctx, unitId, addr, b)
+}
+
+// WritePackedBCD writes a string of decimal digits (0-9) as packed BCD, two digits per byte (FC16). Returns an error if s contains non-digits.
+// Odd byte count is padded with a zero nibble so the payload is register-aligned.
+func (mc *ModbusClient) WritePackedBCD(ctx context.Context, unitId uint8, addr uint16, s string) (err error) {
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	b, err := packedBCDToBytes(s)
+	if err != nil {
+		return err
+	}
+	if len(b) == 0 {
+		return ErrUnexpectedParameters
+	}
+	if len(b)%2 == 1 {
+		b = append(b, 0)
+	}
+	return mc.writeRegisters(ctx, unitId, addr, b)
+}
+
+// WriteUint8s writes quantity bytes to registers (FC16) in raw wire order. No byte reordering. quantity must be greater than zero.
+func (mc *ModbusClient) WriteUint8s(ctx context.Context, unitId uint8, addr uint16, values []uint8) (err error) {
+	if len(values) == 0 {
+		return ErrUnexpectedParameters
+	}
+	mc.lock.Lock()
+	defer mc.lock.Unlock()
+	return mc.writeBytes(ctx, unitId, addr, values, false)
+}
+
+// WriteIPAddr writes 4 bytes as an IPv4 address to 2 registers (FC16) in raw wire order.
+func (mc *ModbusClient) WriteIPAddr(ctx context.Context, unitId uint8, addr uint16, ip net.IP) (err error) {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return ErrUnexpectedParameters
+	}
+	return mc.WriteUint8s(ctx, unitId, addr, ip4)
+}
+
+// WriteIPv6Addr writes 16 bytes as an IPv6 address to 8 registers (FC16) in raw wire order.
+func (mc *ModbusClient) WriteIPv6Addr(ctx context.Context, unitId uint8, addr uint16, ip net.IP) (err error) {
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return ErrUnexpectedParameters
+	}
+	return mc.WriteUint8s(ctx, unitId, addr, ip16)
+}
+
+// WriteEUI48 writes 6 bytes as a MAC/EUI-48 address to 3 registers (FC16) in raw wire order.
+func (mc *ModbusClient) WriteEUI48(ctx context.Context, unitId uint8, addr uint16, mac net.HardwareAddr) (err error) {
+	if mac == nil || len(mac) != 6 {
+		return ErrUnexpectedParameters
+	}
+	return mc.WriteUint8s(ctx, unitId, addr, mac)
 }
 
 // Performs a combined read/write in a single Modbus transaction (function code 23).
