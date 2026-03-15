@@ -26,9 +26,10 @@ metrics hooks — are built in.
   - [Install](#install)
   - [Transport modes](#transport-modes)
   - [Client](#client)
-    - [Client supported function codes](#client-supported-function-codes)
-    - [Supported Go types](#supported-go-types)
-    - [Encoding / byte order](#encoding--byte-order)
+  - [Client supported function codes](#client-supported-function-codes)
+  - [Codec API](#codec-api)
+  - [Supported Go types](#supported-go-types)
+  - [Encoding / byte order](#encoding--byte-order)
   - [Server](#server)
     - [Server supported function codes](#server-supported-function-codes)
   - [Logging](#logging)
@@ -88,12 +89,12 @@ cancellation control independent of the connection lifecycle.
 |---|---|---|---|
 | 01 | 0x01 | Read Coils | `ReadCoil`, `ReadCoils` |
 | 02 | 0x02 | Read Discrete Inputs | `ReadDiscreteInput`, `ReadDiscreteInputs` |
-| 03 | 0x03 | Read Holding Registers | `ReadRegister`, `ReadRegisters`, `ReadUint16(s)`, `ReadUint16Pair`, `ReadRegisterBit`, `ReadRegisterBits`, `ReadInt16(s)`, … (see API) |
+| 03 | 0x03 | Read Holding Registers | `ReadRegister`, `ReadRegisters`, `ReadUint16(s)`, `ReadUint16Pair`, `ReadRegisterBit`, `ReadRegisterBits`, `ReadInt16(s)`, `ReadWithCodec`, … (see API) |
 | 04 | 0x04 | Read Input Registers | same methods as FC03, passing `InputRegister` |
 | 05 | 0x05 | Write Single Coil | `WriteCoil`, `WriteCoilValue` |
 | 06 | 0x06 | Write Single Register | `WriteRegister` |
 | 15 | 0x0F | Write Multiple Coils | `WriteCoils` |
-| 16 | 0x10 | Write Multiple Registers | `WriteRegisters`, `WriteRegisterBit`, `UpdateRegisterMask`, `WriteUint32(s)`, `WriteInt16(s)`, … (see API) |
+| 16 | 0x10 | Write Multiple Registers | `WriteRegisters`, `WriteRegisterBit`, `UpdateRegisterMask`, `WriteWithCodec`, `WriteUint32(s)`, `WriteInt16(s)`, … (see API) |
 | 20 | 0x14 | Read File Record | `ReadFileRecords` |
 | 21 | 0x15 | Write File Record | `WriteFileRecords` |
 | 08 | 0x08 | Diagnostics | `Diagnostics` |
@@ -103,6 +104,18 @@ cancellation control independent of the connection lifecycle.
 | 43/14 | 0x2B/0x0E | Read Device Identification | `ReadDeviceIdentification`, `ReadAllDeviceIdentification` |
 
 **Device detection:** `HasUnitReadFunction(ctx, unitId, fc)` checks a single read-style FC (FC08, FC43, FC03, FC04, FC01, FC02, FC11, FC18, FC20). `HasUnitIdentifyFunction(ctx, unitId)` checks FC43 (Read Device Identification). **SunSpec discovery:** `DetectSunSpec(ctx, opts)` probes candidate base addresses for the SunSpec "SunS" marker; `ReadSunSpecModelHeaders(ctx, opts, base)` enumerates the model chain (ID and length only); `DiscoverSunSpec(ctx, opts)` does both in one call for fingerprinting and inventory. The library does not decode SunSpec points or schemas — only transport-level detection and model headers. See [API.md § 2.8](API.md#28-modbus-device-detection) and [API.md § 2.9](API.md#29-sunspec-discovery).
+
+### Codec API
+
+The library provides a **codec-first** layer for typed register read/write with explicit layout and discovery:
+
+- **Transport:** `ReadWithCodec[T]` and `WriteWithCodec[T]` are package-level generic functions that read or write registers using a `Decoder[T]` or `Encoder[T]`. They do not use `SetEncoding`; the codec owns interpretation.
+- **Layout:** `RegisterLayout` describes byte order across registers (e.g. big-endian 4321 vs little-endian 2143). Use `NewRegisterLayout` or common vars such as `Layout32_4321`, `Layout64_21436587`.
+- **Codecs:** Constructors like `NewUint32Codec(layout)`, `NewAsciiCodec(registerCount)`, `NewIPAddrCodec()` return fixed-width `Codec[T]` instances. Numeric codecs take a layout; text and byte codecs take a register or byte count.
+- **Discovery:** `AvailableCodecDescriptors()`, `CodecDescriptorsForRegisterCount`, `CodecDescriptorByID`, `CodecCandidatesForRegisterCount`, and `FindCodecDescriptors` expose a **curated subset** of common widths for UI/CLI; constructors accept any valid width.
+- **Offline:** `DecodeRegisters`, `EncodeRegisters`, `ValidateRegisterSpec`, and `ValidateByteSpec` work on `[]uint16` / `[]byte` for tests and tooling.
+
+See [API.md § 11](API.md#11-codec-api) for the full reference.
 
 ### Supported Go types
 
@@ -121,8 +134,9 @@ cancellation control independent of the connection lifecycle.
 ### Encoding / byte order
 
 `SetEncoding(endianness, wordOrder)` controls how multi-byte and multi-register values
-are decoded and encoded. Defaults to `BigEndian, HighWordFirst`. Changes apply to all
-subsequent requests on that client instance.
+are decoded and encoded by the **legacy** read/write helpers (e.g. `ReadUint32`, `WriteFloat64`). Defaults to `BigEndian, HighWordFirst`. Changes apply to all subsequent requests on that client instance.
+
+When using the **codec API** (`ReadWithCodec` / `WriteWithCodec`), layout and interpretation are defined by the codec (e.g. `NewUint32Codec(Layout32_2143)`); `SetEncoding` is not used.
 
 | Setting | Constants | Meaning |
 |---|---|---|
@@ -200,6 +214,10 @@ be tested with `errors.Is`:
 | `ErrUnexpectedParameters` | Invalid arguments passed to a client method |
 | `ErrSunSpecModelChainInvalid` | Malformed or non-progressing SunSpec model chain |
 | `ErrSunSpecModelChainLimitExceeded` | SunSpec model chain exceeded `MaxAddressSpan` |
+| `ErrCodecRegisterCount` | Register count does not match codec |
+| `ErrCodecLayout` | Invalid layout for codec |
+| `ErrCodecValue` | Invalid value for encode/decode |
+| `ErrEncodingError` | Codec encoding/byte validation error |
 
 When the remote device sends a Modbus exception response, the error is additionally
 wrapped in `*ExceptionError`, which carries the raw `FunctionCode` and `ExceptionCode`

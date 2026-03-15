@@ -1,3 +1,32 @@
+# Release v0.3.0
+
+**Date:** 2026-03-15
+**Previous release:** v0.2.5
+
+## Summary
+
+Introduce a **codec-first API** for typed register read/write with explicit layout and discovery. Codecs own interpretation; transport remains register-native. The library continues to offer legacy helpers (e.g. `ReadUint32`, `WriteFloat64`) with `SetEncoding`; the codec path uses explicit `RegisterLayout` and does not use `SetEncoding`.
+
+## Changes
+
+### Added
+
+- **Codec interfaces** — `Decoder[T]`, `Encoder[T]`, and `Codec[T]` with `ID()`, `Name()`, `RegisterSpec()`, `ByteSpec()`, `DecodeRegisters`, `EncodeRegisters`. All codec instances are fixed-width (parameterized at construction).
+- **RegisterLayout** — Immutable layout describing byte order across registers (1-based positions: 1 = LSB). `NewRegisterLayout`, `MustNewRegisterLayout`, getters `RegisterCount()`, `BytePositions()`, `String()`. Common vars: `Layout16_21`, `Layout16_12`, `Layout32_4321`, `Layout32_2143`, `Layout48_654321`, `Layout48_214365`, `Layout64_87654321`, `Layout64_21436587`.
+- **Transport** — Package-level generic `ReadWithCodec[T](mc, ctx, unitID, addr, regType, codec)` and `WriteWithCodec[T](mc, ctx, unitID, addr, value, codec)`. Wire order (big-endian per register); codec owns layout. Convenience: `ReadUint32WithLayout`, `WriteUint32WithLayout`.
+- **Numeric codecs** — `New*Codec(layout)` and `MustNew*Codec(layout)` for uint16, int16, uint32, int32, uint48, int48, uint64, int64, float32, float64. Constructors validate layout and return `(Codec[T], error)` or panic for `Must`.
+- **Text codecs** — `NewAsciiCodec`, `NewAsciiFixedCodec`, `NewAsciiReverseCodec`, `NewBCDCodec`, `NewPackedBCDCodec` (register count = width). Full ASCII validation on encode; overlong input truncated; BCD truncation keeps rightmost digits.
+- **Bytes and network codecs** — `NewBytesCodec(byteCount)`, `NewUint8SliceCodec(byteCount)` (even byte count required); `NewIPAddrCodec()`, `NewIPv6AddrCodec()` (IPv6 rejects IPv4), `NewEUI48Codec()`.
+- **Offline helpers** — `DecodeRegisters`, `EncodeRegisters`, `ValidateRegisterSpec(spec, regs, codecID)`, `ValidateByteSpec(spec, b, codecID)` for tests and tooling.
+- **Discovery (registry)** — `CodecDescriptor`, `CodecCandidate`, `CodecQuery`. `AvailableCodecDescriptors()`, `CodecDescriptorsForRegisterCount`, `CodecDescriptorsForByteCount`, `CodecDescriptorByID`, `CodecCandidatesForRegisterCount`, `CodecCandidatesForByteCount`, `FindCodecDescriptors`. Returned descriptors are deep-copied. Discovery exposes a curated subset of common widths; constructors accept any valid width.
+- **Codec errors** — Sentinels: `ErrCodecRegisterCount`, `ErrCodecLayout`, `ErrCodecValue`, `ErrEncodingError`. Typed: `*CodecRegisterCountError`, `*CodecLayoutError`, `*CodecByteCountError`, `*CodecValueError` (all unwrap to the appropriate sentinel). `ReadWithCodec` returns `*CodecRegisterCountError` when `spec.Count == 0`.
+
+### Unchanged
+
+- Legacy read/write helpers and `SetEncoding` unchanged. Codec API is additive. SunSpec discovery, bitfield ops, and all existing client/server behaviour unchanged.
+
+---
+
 # Release v0.2.5
 
 **Date:** 2026-03-14

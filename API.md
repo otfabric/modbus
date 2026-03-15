@@ -31,6 +31,7 @@ All examples assume `import "github.com/otfabric/modbus"`.
 8. [Connection pool](#8-connection-pool)
 9. [TLS helpers](#9-tls-helpers)
 10. [Type constants](#10-type-constants)
+11. [Codec API](#11-codec-api)
 
 ---
 
@@ -365,6 +366,10 @@ Example encoding reference (from the Modbus spec):
 | BCD        | 9, 2      | `0x09 0x02` |
 | Packed BCD | 9, 2      | `0x92`      |
 
+#### Codec-based read (FC03/FC04)
+
+For typed read with explicit layout, use the **codec API**: `ReadWithCodec[T](mc, ctx, unitID, addr, regType, codec)`. Codecs define register count and byte order; they do not use `SetEncoding`. See [§ 11 Codec API](#11-codec-api).
+
 #### Raw bytes
 
 ```go
@@ -492,6 +497,10 @@ func (mc *ModbusClient) WriteEUI48(ctx context.Context, unitId uint8, addr uint1
 - **WriteIPAddr** — 4 bytes (2 registers) from `ip.To4()`. Nil or non-IPv4 returns `ErrUnexpectedParameters`.
 - **WriteIPv6Addr** — 16 bytes (8 registers) from `ip.To16()`.
 - **WriteEUI48** — 6 bytes (3 registers). Nil or length ≠ 6 returns `ErrUnexpectedParameters`.
+
+#### Codec-based write (FC16)
+
+For typed write with explicit layout, use the **codec API**: `WriteWithCodec[T](mc, ctx, unitID, addr, value, codec)`. See [§ 11 Codec API](#11-codec-api).
 
 #### Raw bytes
 
@@ -1177,6 +1186,10 @@ var (
     ErrUnexpectedParameters          // invalid arguments passed to a client method
     ErrSunSpecModelChainInvalid      // malformed or non-progressing SunSpec model chain
     ErrSunSpecModelChainLimitExceeded // SunSpec model chain exceeded MaxAddressSpan
+    ErrCodecRegisterCount            // register count does not match codec
+    ErrCodecLayout                   // invalid layout for codec
+    ErrCodecValue                    // invalid value for encode/decode
+    ErrEncodingError                 // codec encoding/byte validation error
 )
 ```
 
@@ -1209,6 +1222,25 @@ if err != nil {
         // address 0x9000 does not exist on this device
     }
 }
+```
+
+### Codec errors
+
+Codec operations use the same sentinels and add typed errors for diagnostics. Use `errors.As` to inspect them.
+
+```go
+var (
+    ErrCodecRegisterCount  // register count mismatch
+    ErrCodecLayout        // invalid layout
+    ErrCodecValue         // invalid value for encode/decode
+    ErrEncodingError      // byte-count or encoding validation
+)
+
+// Typed errors (errors.As for Codec, Expected, Actual, Layout, Reason)
+type CodecRegisterCountError struct { Codec string; Expected RegisterSpec; Actual uint16 }
+type CodecLayoutError struct { Codec string; Layout RegisterLayout; Reason string }
+type CodecByteCountError struct { Codec string; Expected ByteSpec; Actual uint16 }
+type CodecValueError struct { Codec string; Reason string }
 ```
 
 ---
@@ -1505,3 +1537,197 @@ Exported constants for SunSpec marker detection, end-of-chain detection, and def
 | Variable | Type | Value | Description |
 |---|---|---|---|
 | `SunSpecDefaultBaseAddresses` | `[]uint16` | `{0, 40000, 50000, 1, 39999, 40001, 49999, 50001}` | Default candidate base addresses for SunSpec probe |
+
+---
+
+## 11. Codec API
+
+The codec API provides typed register read/write with explicit layout. Transport remains register-native; codecs own interpretation. All codec instances are fixed-width (parameterized at construction).
+
+### 11.1 RegisterLayout and common layouts
+
+`RegisterLayout` describes how bytes of a multi-register value are permuted across Modbus registers. Positions are 1-based: 1 = least-significant byte, highest = most-significant byte. Layouts are immutable.
+
+```go
+func NewRegisterLayout(registerCount uint16, positions ...uint8) (RegisterLayout, error)
+func MustNewRegisterLayout(registerCount uint16, positions ...uint8) RegisterLayout
+func (l RegisterLayout) RegisterCount() uint16
+func (l RegisterLayout) BytePositions() []uint8  // copy; do not mutate
+func (l RegisterLayout) String() string          // e.g. "4321", "21436587"
+```
+
+**Common layout variables (fully explicit byte-position notation):**
+
+| Name | Registers | Typical use |
+|------|-----------|--------------|
+| `Layout16_21`, `Layout16_12` | 1 | 16-bit byte order |
+| `Layout32_4321`, `Layout32_2143` | 2 | 32-bit (e.g. ABCD vs CDAB) |
+| `Layout48_654321`, `Layout48_214365` | 3 | 48-bit |
+| `Layout64_87654321`, `Layout64_21436587` | 4 | 64-bit |
+
+`ErrInvalidLayout` is returned when positions are invalid (wrong length, duplicate, or out of range).
+
+### 11.2 Codec interfaces
+
+```go
+type RegisterSpec struct { Count uint16 }
+type ByteSpec struct { Count uint16 }
+
+type Decoder[T any] interface {
+    ID() string
+    Name() string
+    RegisterSpec() RegisterSpec
+    ByteSpec() ByteSpec
+    DecodeRegisters(regs []uint16) (T, error)
+}
+
+type Encoder[T any] interface {
+    ID() string
+    Name() string
+    RegisterSpec() RegisterSpec
+    ByteSpec() ByteSpec
+    EncodeRegisters(value T) ([]uint16, error)
+}
+
+type Codec[T any] interface {
+    Decoder[T]
+    Encoder[T]
+}
+```
+
+`ID()` is stable for discovery and tests; `Name()` is human-readable.
+
+### 11.3 Transport: ReadWithCodec, WriteWithCodec
+
+These are **package-level** generic functions (Go methods cannot have type parameters). They use wire order (big-endian per register) and do **not** use `SetEncoding`.
+
+```go
+func ReadWithCodec[T any](
+    mc *ModbusClient,
+    ctx context.Context,
+    unitID uint8,
+    addr uint16,
+    regType RegType,
+    codec Decoder[T],
+) (T, error)
+
+func WriteWithCodec[T any](
+    mc *ModbusClient,
+    ctx context.Context,
+    unitID uint8,
+    addr uint16,
+    value T,
+    codec Encoder[T],
+) error
+```
+
+If `codec.RegisterSpec().Count == 0`, `ReadWithCodec` returns a `*CodecRegisterCountError`.
+
+**Convenience wrappers for uint32:**
+
+```go
+func ReadUint32WithLayout(mc *ModbusClient, ctx context.Context, unitID uint8, addr uint16, regType RegType, layout RegisterLayout) (uint32, error)
+func WriteUint32WithLayout(mc *ModbusClient, ctx context.Context, unitID uint8, addr uint16, v uint32, layout RegisterLayout) error
+```
+
+### 11.4 Offline helpers
+
+For tests and tooling on raw register/byte data:
+
+```go
+func DecodeRegisters[T any](regs []uint16, codec Decoder[T]) (T, error)
+func EncodeRegisters[T any](value T, codec Encoder[T]) ([]uint16, error)
+func ValidateRegisterSpec(spec RegisterSpec, regs []uint16, codecID string) error
+func ValidateByteSpec(spec ByteSpec, b []byte, codecID string) error
+```
+
+`ValidateRegisterSpec` returns `*CodecRegisterCountError` on mismatch; `ValidateByteSpec` returns `*CodecByteCountError`. Use `codec.ID()` for the `codecID` argument.
+
+### 11.5 Codec constructors
+
+**Numeric (layout required):** Each returns `(Codec[T], error)` or `Codec[T]` for `Must` variants.
+
+```go
+func NewUint16Codec(layout RegisterLayout) (Codec[uint16], error)
+func MustNewUint16Codec(layout RegisterLayout) Codec[uint16]
+func NewInt16Codec(layout RegisterLayout) (Codec[int16], error)
+func MustNewInt16Codec(layout RegisterLayout) Codec[int16]
+func NewUint32Codec(layout RegisterLayout) (Codec[uint32], error)
+func MustNewUint32Codec(layout RegisterLayout) Codec[uint32]
+func NewInt32Codec(layout RegisterLayout) (Codec[int32], error)
+func MustNewInt32Codec(layout RegisterLayout) Codec[int32]
+func NewUint48Codec(layout RegisterLayout) (Codec[uint64], error)
+func MustNewUint48Codec(layout RegisterLayout) Codec[uint64]
+func NewInt48Codec(layout RegisterLayout) (Codec[int64], error)
+func MustNewInt48Codec(layout RegisterLayout) Codec[int64]
+func NewUint64Codec(layout RegisterLayout) (Codec[uint64], error)
+func MustNewUint64Codec(layout RegisterLayout) Codec[uint64]
+func NewInt64Codec(layout RegisterLayout) (Codec[int64], error)
+func MustNewInt64Codec(layout RegisterLayout) Codec[int64]
+func NewFloat32Codec(layout RegisterLayout) (Codec[float32], error)
+func MustNewFloat32Codec(layout RegisterLayout) Codec[float32]
+func NewFloat64Codec(layout RegisterLayout) (Codec[float64], error)
+func MustNewFloat64Codec(layout RegisterLayout) Codec[float64]
+```
+
+**Text (register count = width in registers):**
+
+```go
+func NewAsciiCodec(registerCount uint16) (Codec[string], error)
+func NewAsciiFixedCodec(registerCount uint16) (Codec[string], error)
+func NewAsciiReverseCodec(registerCount uint16) (Codec[string], error)
+func NewBCDCodec(registerCount uint16) (Codec[string], error)
+func NewPackedBCDCodec(registerCount uint16) (Codec[string], error)
+```
+
+**Bytes and network (fixed size or byte count):** `NewBytesCodec` and `NewUint8SliceCodec` require **even** byte count (register-backed). IPv6 codec rejects IPv4 addresses.
+
+```go
+func NewBytesCodec(byteCount uint16) (Codec[[]byte], error)
+func NewUint8SliceCodec(byteCount uint16) (Codec[[]uint8], error)
+func NewIPAddrCodec() Codec[net.IP]
+func NewIPv6AddrCodec() Codec[net.IP]
+func NewEUI48Codec() Codec[net.HardwareAddr]
+```
+
+### 11.6 Discovery (registry)
+
+Descriptors are derived from the registration table; returned descriptors are deep-copied. Discovery exposes a **curated subset** of common widths (e.g. text: 1, 2, 4, 8 registers; bytes: 2, 4, 6, 8, 16 bytes). Constructors accept any valid width; not every width appears in the registry.
+
+```go
+type CodecDescriptor struct {
+    ID           string
+    Name         string
+    Family       CodecFamily
+    ValueKind    CodecValueKind
+    RegisterSpec RegisterSpec
+    ByteSpec     ByteSpec
+    Layouts      []RegisterLayoutDescriptor  // nil for layout-less codecs
+}
+
+type CodecCandidate struct {
+    CodecID    string
+    LayoutName string
+}
+
+type CodecQuery struct {
+    RegisterCount uint16
+    ByteCount     uint16
+    Family        CodecFamily
+    ValueKind     CodecValueKind
+}
+
+func AvailableCodecDescriptors() []CodecDescriptor
+func CodecDescriptorsForRegisterCount(count uint16) []CodecDescriptor
+func CodecDescriptorsForByteCount(count uint16) []CodecDescriptor
+func CodecDescriptorByID(id string) (CodecDescriptor, bool)
+func CodecCandidatesForRegisterCount(count uint16) []CodecCandidate
+func CodecCandidatesForByteCount(count uint16) []CodecCandidate
+func FindCodecDescriptors(q CodecQuery) []CodecDescriptor
+```
+
+`CodecFamily` and `CodecValueKind` have `String()` methods. `CodecCandidate.CodecID` equals the corresponding `CodecDescriptor.ID`.
+
+### 11.7 Codec errors (summary)
+
+Sentinels: `ErrCodecRegisterCount`, `ErrCodecLayout`, `ErrCodecValue`, `ErrEncodingError`. Typed: `*CodecRegisterCountError`, `*CodecLayoutError`, `*CodecByteCountError`, `*CodecValueError`; all implement `Unwrap()` to the appropriate sentinel. See [§ 4](#4-errors).
